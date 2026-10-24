@@ -1,0 +1,551 @@
+name: Write Project Files
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  write:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write all project files
+        run: |
+          mkdir -p app/src/main/java/com/example/savetool
+          mkdir -p gradle/wrapper
+
+          cat > build.gradle.kts << 'BUILD_EOF'
+          plugins {
+              id("com.android.application") version "8.2.0" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.20" apply false
+          }
+          BUILD_EOF
+
+          cat > settings.gradle.kts << 'SETTINGS_EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "SaveEditor"
+          include(":app")
+          SETTINGS_EOF
+
+          cat > gradle.properties << 'PROPS_EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          android.nonTransitiveRClass=true
+          PROPS_EOF
+
+          cat > app/build.gradle.kts << 'APP_EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.example.savetool"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.example.savetool"
+                  minSdk = 27
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                  }
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+              buildFeatures {
+                  compose = true
+              }
+              composeOptions {
+                  kotlinCompilerExtensionVersion = "1.5.4"
+              }
+          }
+
+          dependencies {
+              implementation(platform("androidx.compose:compose-bom:2023.10.01"))
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.activity:activity-compose:1.8.2")
+              implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+          }
+          APP_EOF
+
+          cat > app/src/main/AndroidManifest.xml << 'MANIFEST_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:allowBackup="true"
+                  android:label="Save Editor"
+                  android:icon="@android:drawable/sym_def_app_icon"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          MANIFEST_EOF
+
+          cat > app/src/main/java/com/example/savetool/SaveModel.kt << 'MODEL_EOF'
+          package com.example.savetool
+
+          sealed class BinValue {
+              data class Leaf(
+                  val offset: Int,
+                  val value: Any?,
+                  val length: Int,
+                  val type: PrimTypeEnum,
+                  val special: String? = null
+              ) : BinValue()
+
+              data class Str(val offset: Int, val value: String, val length: Int) : BinValue()
+
+              data class Obj(
+                  val className: String,
+                  val memberNames: List<String>,
+                  val memberTypes: List<MemberType>,
+                  val members: List<BinValue>
+              ) : BinValue()
+
+              data class Arr(val items: List<BinValue>, val elementType: PrimTypeEnum? = null) : BinValue()
+
+              class Ref(val id: Int) : BinValue() {
+                  var resolved: BinValue? = null
+              }
+
+              data class NullMultiple(val count: Int) : BinValue()
+
+              object None : BinValue()
+          }
+
+          data class MemberType(val binaryType: BinTypeEnum, val primitiveType: PrimTypeEnum? = null)
+
+          enum class BinTypeEnum(val raw: Int) {
+              Primitive(0), String(1), Object(2), SystemClass(3), Class(4),
+              ObjectArray(5), StringArray(6), PrimitiveArray(7);
+              companion object {
+                  fun fromRaw(b: Int) = entries.firstOrNull { it.raw == b }
+                      ?: error("Unknown BinTypeEnum: $b")
+              }
+          }
+
+          enum class PrimTypeEnum(val raw: Int, val size: Int) {
+              Boolean(1, 1), Byte(2, 1), Char(3, 1), Double(6, 8), Int16(7, 2),
+              Int32(8, 4), Int64(9, 8), SByte(10, 1), Single(11, 4),
+              UInt16(14, 2), UInt32(15, 4), UInt64(16, 8), Null(17, 0), String(18, -1);
+              companion object {
+                  fun fromRaw(b: Int) = entries.firstOrNull { it.raw == b }
+                      ?: error("Unknown PrimTypeEnum: $b")
+              }
+          }
+
+          data class StatSlot(
+              val index: Int,
+              val offset: Int,
+              val length: Int,
+              val type: PrimTypeEnum,
+              val value: Float,
+              val special: String? = null
+          )
+
+          data class Character(
+              val arrayIndex: Int,
+              val name: String,
+              val stats: List<StatSlot>,
+              val fields: Map<String, BinValue>
+          )
+
+          data class SaveDocument(
+              val rootClassName: String,
+              val characters: List<Character>
+          )
+
+          fun BinValue.Obj.member(name: String): BinValue? =
+              memberNames.indexOf(name).takeIf { it >= 0 }?.let { members[it] }
+          MODEL_EOF
+
+          cat > app/src/main/java/com/example/savetool/SaveParser.kt << 'PARSER_EOF'
+          package com.example.savetool
+
+          import java.nio.ByteBuffer
+          import java.nio.ByteOrder
+          import java.nio.charset.StandardCharsets
+
+          class SaveParser(private val bytes: ByteArray) {
+              private val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+              private val objectIndex = HashMap<Int, BinValue>()
+              private var rootId = -1
+              private val pendingRefs = mutableListOf<BinValue.Ref>()
+
+              fun parse(): BinValue.Obj {
+                  while (buf.hasRemaining()) parseRecord()
+                  for (r in pendingRefs) r.resolved = objectIndex[r.id]
+                  return objectIndex[rootId] as? BinValue.Obj
+                      ?: error("Root object (id=$rootId) not found")
+              }
+
+              private fun readUByte(): Int = buf.get().toInt() and 0xFF
+              private fun readSByte(): Int = buf.get().toInt()
+              private fun readInt32(): Int = buf.getInt()
+
+              private fun readString(len: Int): String {
+                  val off = buf.position()
+                  buf.position(off + len)
+                  return String(bytes, off, len, StandardCharsets.UTF_8)
+              }
+
+              private fun readLeaf(t: PrimTypeEnum): BinValue.Leaf {
+                  val off = buf.position()
+                  val raw: Any? = when (t) {
+                      PrimTypeEnum.Boolean -> readUByte() != 0
+                      PrimTypeEnum.Byte    -> readSByte()
+                      PrimTypeEnum.Char    -> readUByte().toChar()
+                      PrimTypeEnum.Double  -> buf.getDouble()
+                      PrimTypeEnum.Int16   -> buf.getShort().toInt()
+                      PrimTypeEnum.Int32   -> buf.getInt()
+                      PrimTypeEnum.Int64   -> buf.getLong()
+                      PrimTypeEnum.SByte   -> buf.get().toInt()
+                      PrimTypeEnum.Single  -> buf.getFloat()
+                      PrimTypeEnum.UInt16  -> readUByte() or (readUByte() shl 8)
+                      PrimTypeEnum.UInt32  -> buf.getInt().toLong() and 0xFFFF_FFFFL
+                      PrimTypeEnum.UInt64  -> buf.getLong()
+                      else -> error("Unsupported leaf type: $t")
+                  }
+                  val len = buf.position() - off
+                  val special = when {
+                      raw is Float  && raw.isNaN()      -> "NaN"
+                      raw is Float  && raw.isInfinite() -> if (raw > 0) "Infinity" else "-Infinity"
+                      raw is Double && raw.isNaN()      -> "NaN"
+                      raw is Double && raw.isInfinite() -> if (raw > 0) "Infinity" else "-Infinity"
+                      else -> null
+                  }
+                  return BinValue.Leaf(off, if (special != null) null else raw, len, t, special)
+              }
+
+              private fun readMemberValue(mt: MemberType): BinValue = when (mt.binaryType) {
+                  BinTypeEnum.Primitive -> readLeaf(mt.primitiveType!!)
+                  BinTypeEnum.String, BinTypeEnum.Class, BinTypeEnum.SystemClass,
+                  BinTypeEnum.Object, BinTypeEnum.PrimitiveArray,
+                  BinTypeEnum.StringArray -> parseRecord()
+                  BinTypeEnum.ObjectArray -> error("ObjectArray not implemented")
+              }
+
+              private fun parseRecord(): BinValue {
+                  val t = readUByte()
+                  return when (t) {
+                      0  -> parseSerializationHeader()
+                      1  -> parseClassWithId()
+                      4  -> parseClassWithMembersAndTypes(isSystem = true)
+                      5  -> parseClassWithMembersAndTypes(isSystem = false)
+                      6  -> parseBinaryObjectString()
+                      7  -> parseBinaryArray()
+                      9  -> parseMemberReference()
+                      10 -> BinValue.NullMultiple(1)
+                      11 -> BinValue.None
+                      12 -> parseBinaryLibrary()
+                      13 -> BinValue.NullMultiple(readUByte())
+                      14 -> BinValue.NullMultiple(readInt32())
+                      15 -> parseArraySinglePrimitive()
+                      17 -> parseArraySingleString()
+                      else -> error("Unknown record type 0x${t.toString(16)}")
+                  }
+              }
+
+              private fun parseSerializationHeader(): BinValue {
+                  rootId = readInt32(); readInt32(); readInt32(); readInt32()
+                  return BinValue.None
+              }
+
+              private fun parseBinaryLibrary(): BinValue {
+                  readInt32(); readString(readUByte())
+                  return BinValue.None
+              }
+
+              private fun parseMemberReference(): BinValue.Ref {
+                  val id = readInt32()
+                  return BinValue.Ref(id).also { pendingRefs += it }
+              }
+
+              private fun parseBinaryObjectString(): BinValue.Str {
+                  val id = readInt32()
+                  val len = readUByte()
+                  val off = buf.position()
+                  val s = BinValue.Str(off, readString(len), len)
+                  objectIndex[id] = s
+                  return s
+              }
+
+              private fun parseClassWithMembersAndTypes(isSystem: Boolean): BinValue.Obj {
+                  val objId = readInt32()
+                  val className = readString(readUByte())
+                  val memberCount = readInt32()
+                  val memberNames = List(memberCount) { readString(readUByte()) }
+
+                  val memberTypes = List(memberCount) {
+                      val bt = BinTypeEnum.fromRaw(readUByte())
+                      val pt: PrimTypeEnum? = when (bt) {
+                          BinTypeEnum.Primitive, BinTypeEnum.PrimitiveArray ->
+                              PrimTypeEnum.fromRaw(readUByte())
+                          BinTypeEnum.SystemClass -> { readString(readUByte()); null }
+                          BinTypeEnum.Class -> {
+                              readString(readUByte()); readInt32(); null
+                          }
+                          else -> null
+                      }
+                      MemberType(bt, pt)
+                  }
+
+                  if (!isSystem) readInt32()
+
+                  val members = List(memberCount) { readMemberValue(memberTypes[it]) }
+                  return BinValue.Obj(className, memberNames, memberTypes, members)
+                      .also { objectIndex[objId] = it }
+              }
+
+              private fun parseClassWithId(): BinValue.Obj {
+                  val objId = readInt32()
+                  val metaId = readInt32()
+                  val existing = objectIndex[metaId] as? BinValue.Obj
+                      ?: error("ClassWithId: metadata $metaId not found")
+                  val members = List(existing.memberTypes.size) {
+                      readMemberValue(existing.memberTypes[it])
+                  }
+                  return BinValue.Obj(
+                      existing.className, existing.memberNames, existing.memberTypes, members
+                  ).also { objectIndex[objId] = it }
+              }
+
+              private fun parseBinaryArray(): BinValue.Arr {
+                  val objId = readInt32()
+                  val arrayType = readUByte()
+                  val rank = readInt32()
+                  val lengths = List(rank) { readInt32() }
+                  if (arrayType in 3..5) List(rank) { readInt32() }
+
+                  val typeEnum = BinTypeEnum.fromRaw(readUByte())
+                  val prim: PrimTypeEnum? = when (typeEnum) {
+                      BinTypeEnum.Primitive, BinTypeEnum.PrimitiveArray ->
+                          PrimTypeEnum.fromRaw(readUByte())
+                      BinTypeEnum.SystemClass -> { readString(readUByte()); null }
+                      BinTypeEnum.Class -> { readString(readUByte()); readInt32(); null }
+                      else -> null
+                  }
+                  val total = lengths.fold(1) { a, b -> a * b }
+                  val mt = MemberType(typeEnum, prim)
+
+                  val items = mutableListOf<BinValue>()
+                  while (items.size < total) {
+                      val v = readMemberValue(mt)
+                      if (v is BinValue.NullMultiple && v.count > 1) {
+                          repeat(v.count) {
+                              if (items.size < total) items.add(BinValue.NullMultiple(1))
+                          }
+                      } else items.add(v)
+                  }
+                  return BinValue.Arr(items, prim).also { objectIndex[objId] = it }
+              }
+
+              private fun parseArraySinglePrimitive(): BinValue.Arr {
+                  val objId = readInt32()
+                  val len = readInt32()
+                  val pt = PrimTypeEnum.fromRaw(readUByte())
+                  val items = List(len) { readLeaf(pt) }
+                  return BinValue.Arr(items, pt).also { objectIndex[objId] = it }
+              }
+
+              private fun parseArraySingleString(): BinValue.Arr {
+                  val objId = readInt32()
+                  val len = readInt32()
+                  val items = mutableListOf<BinValue>()
+                  while (items.size < len) {
+                      val v = parseRecord()
+                      if (v is BinValue.NullMultiple && v.count > 1) {
+                          repeat(v.count) { if (items.size < len) items.add(BinValue.NullMultiple(1)) }
+                      } else items.add(v)
+                  }
+                  return BinValue.Arr(items, PrimTypeEnum.String).also { objectIndex[objId] = it }
+              }
+
+              fun extract(doc: BinValue.Obj): SaveDocument {
+                  val savedChars = doc.member("savedChars") as? BinValue.Arr
+                      ?: error("savedChars field not found")
+                  val chars = mutableListOf<Character>()
+                  savedChars.items.forEachIndexed { idx, item ->
+                      val obj = when (item) {
+                          is BinValue.Obj -> item
+                          is BinValue.Ref -> item.resolved as? BinValue.Obj
+                          else -> null
+                      }
+                      if (obj != null) chars.add(buildCharacter(idx, obj))
+                  }
+                  return SaveDocument(doc.className, chars)
+              }
+
+              private fun buildCharacter(arrayIndex: Int, obj: BinValue.Obj): Character {
+                  val name = (obj.member("name") as? BinValue.Str)?.value ?: ""
+                  val stats = (obj.member("stat") as? BinValue.Arr)?.items?.mapIndexedNotNull { i, v ->
+                      (v as? BinValue.Leaf)?.let {
+                          StatSlot(
+                              index = i,
+                              offset = it.offset,
+                              length = it.length,
+                              type = it.type,
+                              value = (it.value as? Number)?.toFloat() ?: 0f,
+                              special = it.special
+                          )
+                      }
+                  } ?: emptyList()
+                  return Character(
+                      arrayIndex, name, stats,
+                      obj.memberNames.zip(obj.members).toMap()
+                  )
+              }
+          }
+          PARSER_EOF
+
+          cat > app/src/main/java/com/example/savetool/SavePatcher.kt << 'PATCHER_EOF'
+          package com.example.savetool
+
+          import java.nio.ByteBuffer
+          import java.nio.ByteOrder
+
+          data class StatEdit(val slot: StatSlot, val newValue: Float)
+
+          object SavePatcher {
+              fun apply(original: ByteArray, edits: List<StatEdit>): ByteArray {
+                  if (edits.isEmpty()) return original.copyOf()
+                  val out = original.copyOf()
+                  val buf = ByteBuffer.wrap(out).order(ByteOrder.LITTLE_ENDIAN)
+
+                  for (e in edits) {
+                      val off = e.slot.offset
+                      require(off >= 0 && off + e.slot.length <= out.size) {
+                          "Offset out of range: 0x${off.toString(16)}"
+                      }
+                      buf.position(off)
+                      when (e.slot.type) {
+                          PrimTypeEnum.Single -> buf.putFloat(e.newValue)
+                          PrimTypeEnum.Double -> buf.putDouble(e.newValue.toDouble())
+                          PrimTypeEnum.Int32  -> buf.putInt(e.newValue.toInt())
+                          PrimTypeEnum.Int64  -> buf.putLong(e.newValue.toLong())
+                          PrimTypeEnum.Int16  -> buf.putShort(e.newValue.toInt().toShort())
+                          PrimTypeEnum.UInt16 -> buf.putShort(e.newValue.toInt().toShort())
+                          PrimTypeEnum.UInt32 -> buf.putInt(e.newValue.toLong().toInt())
+                          PrimTypeEnum.UInt64 -> buf.putLong(e.newValue.toLong())
+                          PrimTypeEnum.Byte   -> buf.put(e.newValue.toInt().toByte())
+                          PrimTypeEnum.SByte  -> buf.put(e.newValue.toInt().toByte())
+                          PrimTypeEnum.Boolean-> buf.put(if (e.newValue != 0f) 1 else 0)
+                          else -> error("Unsupported patch type: ${e.slot.type}")
+                      }
+                  }
+                  return out
+              }
+          }
+          PATCHER_EOF
+
+          cat > app/src/main/java/com/example/savetool/SaveSession.kt << 'SESSION_EOF'
+          package com.example.savetool
+
+          class SaveSession private constructor(
+              val originalBytes: ByteArray,
+              val document: SaveDocument
+          ) {
+              private val edits = LinkedHashMap<Int, StatEdit>()
+
+              fun setStat(slot: StatSlot, newValue: Float) {
+                  edits[slot.offset] = StatEdit(slot, newValue)
+              }
+
+              fun setAllStatsOf(char: Character, newValue: Float) =
+                  char.stats.forEach { setStat(it, newValue) }
+
+              fun setAllStatsOfEveryone(newValue: Float) =
+                  document.characters.forEach { c -> c.stats.forEach { setStat(it, newValue) } }
+
+              fun currentValueOf(slot: StatSlot): Float =
+                  edits[slot.offset]?.newValue ?: slot.value
+
+              fun editsCount(): Int = edits.size
+
+              fun clearEdits() = edits.clear()
+
+              fun buildPatchedBytes(): ByteArray =
+                  SavePatcher.apply(originalBytes, edits.values.toList())
+
+              companion object {
+                  fun load(saveBytes: ByteArray): SaveSession {
+                      val parser = SaveParser(saveBytes)
+                      val root = parser.parse()
+                      val doc = parser.extract(root)
+                      return SaveSession(saveBytes, doc)
+                  }
+              }
+          }
+          SESSION_EOF
+
+          cat > app/src/main/java/com/example/savetool/MainActivity.kt << 'MAIN_EOF'
+          package com.example.savetool
+
+          import android.os.Bundle
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.setContent
+          import androidx.compose.foundation.layout.padding
+          import androidx.compose.material3.MaterialTheme
+          import androidx.compose.material3.Surface
+          import androidx.compose.material3.Text
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.unit.dp
+
+          class MainActivity : ComponentActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContent {
+                      MaterialTheme {
+                          Surface(modifier = Modifier.padding(16.dp)) {
+                              Text("Save Editor — build OK")
+                          }
+                      }
+                  }
+              }
+          }
+          MAIN_EOF
+
+      - name: Commit and Push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --staged --quiet || git commit -m "chore: write project files [skip ci]"
+          git push
