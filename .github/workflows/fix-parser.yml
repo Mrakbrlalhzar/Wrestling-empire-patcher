@@ -1,4 +1,4 @@
-name: Fix SaveParser
+name: Fix SaveParser Extract
 on:
   workflow_dispatch:
 permissions:
@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Overwrite SaveParser.kt with fix
+      - name: Overwrite SaveParser.kt with ref-unwrapping
         run: |
           cat > app/src/main/java/com/example/savetool/SaveParser.kt << 'PARSER_EOF'
           package com.example.savetool
@@ -28,6 +28,13 @@ jobs:
                   for (r in pendingRefs) r.resolved = objectIndex[r.id]
                   return objectIndex[rootId] as? BinValue.Obj
                       ?: error("Root object (id=$rootId) not found")
+              }
+
+              /** دنبال کردن زنجیره‌ی Refها تا رسیدن به مقدار واقعی */
+              private fun unwrap(v: BinValue?): BinValue? = when (v) {
+                  null -> null
+                  is BinValue.Ref -> unwrap(v.resolved)
+                  else -> v
               }
 
               private fun readUByte(): Int = buf.get().toInt() and 0xFF
@@ -127,10 +134,7 @@ jobs:
                   val memberCount = readInt32()
                   val memberNames = List(memberCount) { readString(readUByte()) }
 
-                  // ✅ اول همه‌ی BinaryTypeEnumها (پاس اول)
                   val binaryTypeEnums = List(memberCount) { BinTypeEnum.fromRaw(readUByte()) }
-
-                  // ✅ بعد همه‌ی AdditionalInfoها (پاس دوم)
                   val primitiveTypes = List(memberCount) { i ->
                       when (binaryTypeEnums[i]) {
                           BinTypeEnum.Primitive, BinTypeEnum.PrimitiveArray ->
@@ -141,7 +145,7 @@ jobs:
                       }
                   }
 
-                  if (!isSystem) readInt32()  // LibraryId
+                  if (!isSystem) readInt32()
 
                   val memberTypes = List(memberCount) { i ->
                       MemberType(binaryTypeEnums[i], primitiveTypes[i])
@@ -217,25 +221,33 @@ jobs:
                   return BinValue.Arr(items, PrimTypeEnum.String).also { objectIndex[objId] = it }
               }
 
+              // ============ extract با unwrap ============
               fun extract(doc: BinValue.Obj): SaveDocument {
-                  val savedChars = doc.member("savedChars") as? BinValue.Arr
-                      ?: error("savedChars field not found")
+                  val savedCharsValue = unwrap(doc.member("savedChars"))
+                  val savedChars = savedCharsValue as? BinValue.Arr
+                      ?: error(
+                          "savedChars not an Arr. " +
+                          "raw=${savedCharsValue?.let { it::class.simpleName }}, " +
+                          "class=${doc.className}, " +
+                          "members=${doc.memberNames}, " +
+                          "rootId=$rootId"
+                      )
+
                   val chars = mutableListOf<Character>()
                   savedChars.items.forEachIndexed { idx, item ->
-                      val obj = when (item) {
-                          is BinValue.Obj -> item
-                          is BinValue.Ref -> item.resolved as? BinValue.Obj
-                          else -> null
-                      }
+                      val obj = unwrap(item) as? BinValue.Obj
                       if (obj != null) chars.add(buildCharacter(idx, obj))
                   }
                   return SaveDocument(doc.className, chars)
               }
 
               private fun buildCharacter(arrayIndex: Int, obj: BinValue.Obj): Character {
-                  val name = (obj.member("name") as? BinValue.Str)?.value ?: ""
-                  val stats = (obj.member("stat") as? BinValue.Arr)?.items?.mapIndexedNotNull { i, v ->
-                      (v as? BinValue.Leaf)?.let {
+                  val nameValue = unwrap(obj.member("name"))
+                  val name = (nameValue as? BinValue.Str)?.value ?: ""
+
+                  val statsArr = unwrap(obj.member("stat")) as? BinValue.Arr
+                  val stats = statsArr?.items?.mapIndexedNotNull { i, v ->
+                      (unwrap(v) as? BinValue.Leaf)?.let {
                           StatSlot(
                               index = i,
                               offset = it.offset,
@@ -246,6 +258,7 @@ jobs:
                           )
                       }
                   } ?: emptyList()
+
                   return Character(
                       arrayIndex, name, stats,
                       obj.memberNames.zip(obj.members).toMap()
@@ -258,5 +271,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
-          git diff --staged --quiet || git commit -m "fix: separate BinaryTypeEnum and AdditionalInfo passes [skip ci]"
+          git diff --staged --quiet || git commit -m "fix: unwrap refs in extract/buildCharacter [skip ci]"
           git push
