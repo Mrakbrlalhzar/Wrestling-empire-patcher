@@ -80,7 +80,7 @@ class SaveParser(private val bytes: ByteArray) {
             14 -> BinValue.NullMultiple(readInt32())
             15 -> parseArraySinglePrimitive()
             17 -> parseArraySingleString()
-            else -> error("Unknown record type 0x${t.toString(16)}")
+            else -> error("Unknown record type 0x${t.toString(16)} at pos ${buf.position()-1}")
         }
     }
 
@@ -114,22 +114,25 @@ class SaveParser(private val bytes: ByteArray) {
         val memberCount = readInt32()
         val memberNames = List(memberCount) { readString(readUByte()) }
 
-        val memberTypes = List(memberCount) {
-            val bt = BinTypeEnum.fromRaw(readUByte())
-            val pt: PrimTypeEnum? = when (bt) {
+        // ✅ اول همه‌ی BinaryTypeEnumها (پاس اول)
+        val binaryTypeEnums = List(memberCount) { BinTypeEnum.fromRaw(readUByte()) }
+
+        // ✅ بعد همه‌ی AdditionalInfoها (پاس دوم)
+        val primitiveTypes = List(memberCount) { i ->
+            when (binaryTypeEnums[i]) {
                 BinTypeEnum.Primitive, BinTypeEnum.PrimitiveArray ->
                     PrimTypeEnum.fromRaw(readUByte())
                 BinTypeEnum.SystemClass -> { readString(readUByte()); null }
-                BinTypeEnum.Class -> {
-                    readString(readUByte()); readInt32(); null
-                }
+                BinTypeEnum.Class -> { readString(readUByte()); readInt32(); null }
                 else -> null
             }
-            MemberType(bt, pt)
         }
 
-        if (!isSystem) readInt32()
+        if (!isSystem) readInt32()  // LibraryId
 
+        val memberTypes = List(memberCount) { i ->
+            MemberType(binaryTypeEnums[i], primitiveTypes[i])
+        }
         val members = List(memberCount) { readMemberValue(memberTypes[it]) }
         return BinValue.Obj(className, memberNames, memberTypes, members)
             .also { objectIndex[objId] = it }
@@ -193,7 +196,9 @@ class SaveParser(private val bytes: ByteArray) {
         while (items.size < len) {
             val v = parseRecord()
             if (v is BinValue.NullMultiple && v.count > 1) {
-                repeat(v.count) { if (items.size < len) items.add(BinValue.NullMultiple(1)) }
+                repeat(v.count) {
+                    if (items.size < len) items.add(BinValue.NullMultiple(1))
+                }
             } else items.add(v)
         }
         return BinValue.Arr(items, PrimTypeEnum.String).also { objectIndex[objId] = it }
