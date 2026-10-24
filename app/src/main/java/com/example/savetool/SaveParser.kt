@@ -17,6 +17,13 @@ class SaveParser(private val bytes: ByteArray) {
             ?: error("Root object (id=$rootId) not found")
     }
 
+    /** دنبال کردن زنجیره‌ی Refها تا رسیدن به مقدار واقعی */
+    private fun unwrap(v: BinValue?): BinValue? = when (v) {
+        null -> null
+        is BinValue.Ref -> unwrap(v.resolved)
+        else -> v
+    }
+
     private fun readUByte(): Int = buf.get().toInt() and 0xFF
     private fun readSByte(): Int = buf.get().toInt()
     private fun readInt32(): Int = buf.getInt()
@@ -114,10 +121,7 @@ class SaveParser(private val bytes: ByteArray) {
         val memberCount = readInt32()
         val memberNames = List(memberCount) { readString(readUByte()) }
 
-        // ✅ اول همه‌ی BinaryTypeEnumها (پاس اول)
         val binaryTypeEnums = List(memberCount) { BinTypeEnum.fromRaw(readUByte()) }
-
-        // ✅ بعد همه‌ی AdditionalInfoها (پاس دوم)
         val primitiveTypes = List(memberCount) { i ->
             when (binaryTypeEnums[i]) {
                 BinTypeEnum.Primitive, BinTypeEnum.PrimitiveArray ->
@@ -128,7 +132,7 @@ class SaveParser(private val bytes: ByteArray) {
             }
         }
 
-        if (!isSystem) readInt32()  // LibraryId
+        if (!isSystem) readInt32()
 
         val memberTypes = List(memberCount) { i ->
             MemberType(binaryTypeEnums[i], primitiveTypes[i])
@@ -204,25 +208,33 @@ class SaveParser(private val bytes: ByteArray) {
         return BinValue.Arr(items, PrimTypeEnum.String).also { objectIndex[objId] = it }
     }
 
+    // ============ extract با unwrap ============
     fun extract(doc: BinValue.Obj): SaveDocument {
-        val savedChars = doc.member("savedChars") as? BinValue.Arr
-            ?: error("savedChars field not found")
+        val savedCharsValue = unwrap(doc.member("savedChars"))
+        val savedChars = savedCharsValue as? BinValue.Arr
+            ?: error(
+                "savedChars not an Arr. " +
+                "raw=${savedCharsValue?.let { it::class.simpleName }}, " +
+                "class=${doc.className}, " +
+                "members=${doc.memberNames}, " +
+                "rootId=$rootId"
+            )
+
         val chars = mutableListOf<Character>()
         savedChars.items.forEachIndexed { idx, item ->
-            val obj = when (item) {
-                is BinValue.Obj -> item
-                is BinValue.Ref -> item.resolved as? BinValue.Obj
-                else -> null
-            }
+            val obj = unwrap(item) as? BinValue.Obj
             if (obj != null) chars.add(buildCharacter(idx, obj))
         }
         return SaveDocument(doc.className, chars)
     }
 
     private fun buildCharacter(arrayIndex: Int, obj: BinValue.Obj): Character {
-        val name = (obj.member("name") as? BinValue.Str)?.value ?: ""
-        val stats = (obj.member("stat") as? BinValue.Arr)?.items?.mapIndexedNotNull { i, v ->
-            (v as? BinValue.Leaf)?.let {
+        val nameValue = unwrap(obj.member("name"))
+        val name = (nameValue as? BinValue.Str)?.value ?: ""
+
+        val statsArr = unwrap(obj.member("stat")) as? BinValue.Arr
+        val stats = statsArr?.items?.mapIndexedNotNull { i, v ->
+            (unwrap(v) as? BinValue.Leaf)?.let {
                 StatSlot(
                     index = i,
                     offset = it.offset,
@@ -233,6 +245,7 @@ class SaveParser(private val bytes: ByteArray) {
                 )
             }
         } ?: emptyList()
+
         return Character(
             arrayIndex, name, stats,
             obj.memberNames.zip(obj.members).toMap()
