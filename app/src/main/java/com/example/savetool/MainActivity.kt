@@ -1,9 +1,11 @@
 package com.example.savetool
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -28,10 +30,21 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent { SaveEditorTheme { SaveEditorApp() } }
+    }
+}
+/** OpenDocument that also requests write access */
+class WriteOpenDocument : ActivityResultContracts.OpenDocument() {
+    override fun createIntent(context: Context, input: Array<String>): Intent {
+        return super.createIntent(context, input).apply {
+            addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        }
     }
 }
 @OptIn(ExperimentalMaterial3Api::class)
@@ -41,24 +54,65 @@ fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
     val scope = rememberCoroutineScope()
     var selectedCharIndex by remember { mutableStateOf<Int?>(null) }
     var showAbout by remember { mutableStateOf(false) }
-    val openLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) { selectedCharIndex = null; vm.load(uri, context) }
+    var sourceUri by remember { mutableStateOf<Uri?>(null) }
+    BackHandler(enabled = selectedCharIndex != null) { selectedCharIndex = null }
+    val openLauncher = rememberLauncherForActivityResult(WriteOpenDocument()) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            } catch (_: Exception) { }
+            sourceUri = uri
+            selectedCharIndex = null
+            vm.load(uri, context)
+        }
     }
-    val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+    val saveAsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         if (uri != null) {
             val bytes = vm.buildBytes()
             if (bytes != null) {
+                val changeCount = vm.editsCount()
                 scope.launch {
-                    try {
-                        withContext(Dispatchers.IO) {
-                            context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: throw java.io.IOException("open fail")
-                        }
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "✓ Saved (${vm.editsCount()} changes)", Toast.LENGTH_LONG).show()
-                        }
-                    } catch (e: Exception) {
-                        withContext(Dispatchers.Main) { Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show() }
+                    val success = withContext(Dispatchers.IO) {
+                        try {
+                            context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(bytes) }
+                            true
+                        } catch (e: Exception) { false }
                     }
+                    if (success) {
+                        Toast.makeText(context, "✓ Saved ($changeCount changes)", Toast.LENGTH_LONG).show()
+                        sourceUri = uri
+                        vm.load(uri, context)
+                    } else {
+                        Toast.makeText(context, "Save failed", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+    }
+    val performSave: () -> Unit = {
+        val bytes = vm.buildBytes()
+        val changeCount = vm.editsCount()
+        val target = sourceUri
+        if (bytes == null || changeCount == 0) {
+            // nothing to do
+        } else if (target == null) {
+            saveAsLauncher.launch("Save.bytes.patched")
+        } else {
+            scope.launch {
+                val success = withContext(Dispatchers.IO) {
+                    try {
+                        context.contentResolver.openOutputStream(target, "wt")?.use { it.write(bytes) }
+                        true
+                    } catch (e: Exception) { false }
+                }
+                if (success) {
+                    Toast.makeText(context, "✓ Overwritten ($changeCount changes)", Toast.LENGTH_LONG).show()
+                    vm.load(target, context)
+                } else {
+                    Toast.makeText(context, "Cannot write to original. Use Save As.", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -79,9 +133,11 @@ fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
         bottomBar = {
             if (vm.session != null) {
                 BottomAppBar(containerColor = MaterialTheme.colorScheme.surface) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("${vm.editsCount()} changes", Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Button(onClick = { saveLauncher.launch("Save.bytes.patched") }, enabled = vm.editsCount() > 0, shape = RoundedCornerShape(12.dp)) { Text("💾 Save") }
+                        TextButton(onClick = { if (vm.editsCount() > 0) saveAsLauncher.launch("Save.bytes.patched") }, enabled = vm.editsCount() > 0) { Text("Save As") }
+                        Spacer(Modifier.width(4.dp))
+                        Button(onClick = performSave, enabled = vm.editsCount() > 0, shape = RoundedCornerShape(12.dp)) { Text("💾 Save") }
                     }
                 }
             }
@@ -139,8 +195,8 @@ fun AboutDialog(onDismiss: () -> Unit) {
                 GuideStep("2.", "Tap ⚡ All stats → -1000.0 to zero out every character")
                 GuideStep("3.", "Tap any character to edit their stats one by one")
                 GuideStep("4.", "Or use checkboxes + ⚡ Bulk edit to edit many at once")
-                GuideStep("5.", "Tap 💾 Save when finished")
-                GuideStep("6.", "Replace the original Save.bytes with the new file")
+                GuideStep("5.", "Tap 💾 Save to overwrite the original file, or Save As for a copy")
+                GuideStep("6.", "Reopen the file in-game and check your changes")
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
