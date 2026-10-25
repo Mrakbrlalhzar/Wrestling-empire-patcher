@@ -1,0 +1,136 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Determine release tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "RELEASE_TAG=${{ inputs.tag }}" >> $GITHUB_ENV
+          else
+            echo "RELEASE_TAG=${{ github.ref_name }}" >> $GITHUB_ENV
+          fi
+
+      - name: Cleanup other workflows
+        run: |
+          cd .github/workflows
+          for f in *.yml *.yaml; do
+            if [ -f "$f" ] && [ "$f" != "release.yml" ]; then
+              rm -v "$f"
+            fi
+          done
+          echo "=== Remaining workflows ==="
+          ls -la
+
+      - name: Update app/build.gradle.kts for debug-signed release
+        run: |
+          cat > app/build.gradle.kts << 'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "com.example.savetool"
+              compileSdk = 34
+              defaultConfig {
+                  applicationId = "com.example.savetool"
+                  minSdk = 27
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                      signingConfig = signingConfigs.getByName("debug")
+                  }
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+              buildFeatures { compose = true }
+              composeOptions { kotlinCompilerExtensionVersion = "1.5.4" }
+          }
+          dependencies {
+              implementation(platform("androidx.compose:compose-bom:2023.10.01"))
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.activity:activity-compose:1.8.2")
+              implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+          }
+          EOF
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.5
+
+      - name: Ensure Gradle Wrapper
+        run: |
+          if [ ! -s gradlew ]; then gradle wrapper --gradle-version 8.5; fi
+          chmod +x gradlew
+
+      - name: Build Release APK
+        run: ./gradlew clean :app:assembleRelease --no-build-cache --stacktrace
+
+      - name: Prepare release artifact
+        run: |
+          mkdir -p release-output
+          cp app/build/outputs/apk/release/app-release.apk "release-output/SaveEditor-${RELEASE_TAG}.apk"
+          ls -la release-output/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Save Editor ${{ env.RELEASE_TAG }}
+          files: release-output/SaveEditor-${{ env.RELEASE_TAG }}.apk
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload APK as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apk
+          path: release-output/*.apk
+
+      - name: Commit cleanup
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --staged --quiet || git commit -m "chore: keep only release.yml + debug-signed release config [skip ci]"
+          git push origin HEAD:main
