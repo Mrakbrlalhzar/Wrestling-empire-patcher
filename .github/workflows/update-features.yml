@@ -1,0 +1,993 @@
+name: Update Features and Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write SaveModel.kt
+        run: |
+          cat > app/src/main/java/com/example/savetool/SaveModel.kt << 'EOF'
+          package com.example.savetool
+
+          sealed class BinValue {
+              data class Leaf(
+                  val offset: Int,
+                  val value: Any?,
+                  val length: Int,
+                  val type: PrimTypeEnum,
+                  val special: String? = null
+              ) : BinValue()
+
+              data class Str(val offset: Int, val value: String, val length: Int) : BinValue()
+
+              data class Obj(
+                  val className: String,
+                  val memberNames: List<String>,
+                  val memberTypes: List<MemberType>,
+                  val members: List<BinValue>
+              ) : BinValue()
+
+              data class Arr(val items: List<BinValue>, val elementType: PrimTypeEnum? = null) : BinValue()
+
+              class Ref(val id: Int) : BinValue() {
+                  var resolved: BinValue? = null
+              }
+
+              data class NullMultiple(val count: Int) : BinValue()
+
+              object None : BinValue()
+          }
+
+          data class MemberType(val binaryType: BinTypeEnum, val primitiveType: PrimTypeEnum? = null)
+
+          enum class BinTypeEnum(val raw: Int) {
+              Primitive(0), String(1), Object(2), SystemClass(3), Class(4),
+              ObjectArray(5), StringArray(6), PrimitiveArray(7);
+              companion object {
+                  fun fromRaw(b: Int) = entries.firstOrNull { it.raw == b }
+                      ?: error("Unknown BinTypeEnum: $b")
+              }
+          }
+
+          enum class PrimTypeEnum(val raw: Int, val size: Int) {
+              Boolean(1, 1), Byte(2, 1), Char(3, 1), Double(6, 8), Int16(7, 2),
+              Int32(8, 4), Int64(9, 8), SByte(10, 1), Single(11, 4),
+              UInt16(14, 2), UInt32(15, 4), UInt64(16, 8), Null(17, 0), String(18, -1);
+              companion object {
+                  fun fromRaw(b: Int) = entries.firstOrNull { it.raw == b }
+                      ?: error("Unknown PrimTypeEnum: $b")
+              }
+          }
+
+          interface Editable {
+              val offset: Int
+              val length: Int
+              val type: PrimTypeEnum
+              val value: Float
+              val special: String?
+          }
+
+          data class StatSlot(
+              val index: Int,
+              override val offset: Int,
+              override val length: Int,
+              override val type: PrimTypeEnum,
+              override val value: Float,
+              override val special: String? = null
+          ) : Editable
+
+          data class EditableLeaf(
+              val name: String,
+              override val offset: Int,
+              override val length: Int,
+              override val type: PrimTypeEnum,
+              override val value: Float,
+              override val special: String? = null
+          ) : Editable
+
+          data class Character(
+              val arrayIndex: Int,
+              val name: String,
+              val stats: List<StatSlot>,
+              val extraFields: List<EditableLeaf>,
+              val fields: Map<String, BinValue>
+          )
+
+          data class SaveDocument(
+              val rootClassName: String,
+              val characters: List<Character>
+          )
+
+          fun BinValue.Obj.member(name: String): BinValue? =
+              memberNames.indexOf(name).takeIf { it >= 0 }?.let { members[it] }
+
+          fun formatValue(value: Float, type: PrimTypeEnum): String = when (type) {
+              PrimTypeEnum.Int32, PrimTypeEnum.Int64, PrimTypeEnum.Int16,
+              PrimTypeEnum.UInt32, PrimTypeEnum.UInt64, PrimTypeEnum.UInt16,
+              PrimTypeEnum.Byte, PrimTypeEnum.SByte -> value.toInt().toString()
+              PrimTypeEnum.Boolean -> if (value != 0f) "true" else "false"
+              else -> "%.2f".format(value)
+          }
+          EOF
+
+      - name: Write SaveParser.kt
+        run: |
+          cat > app/src/main/java/com/example/savetool/SaveParser.kt << 'EOF'
+          package com.example.savetool
+
+          import java.nio.ByteBuffer
+          import java.nio.ByteOrder
+          import java.nio.charset.StandardCharsets
+
+          class SaveParser(private val bytes: ByteArray) {
+              private val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+              private val objectIndex = HashMap<Int, BinValue>()
+              private var rootId = -1
+              private val pendingRefs = mutableListOf<BinValue.Ref>()
+
+              fun parse(): BinValue.Obj {
+                  while (buf.hasRemaining()) parseRecord()
+                  for (r in pendingRefs) r.resolved = objectIndex[r.id]
+                  return objectIndex[rootId] as? BinValue.Obj
+                      ?: error("Root object (id=$rootId) not found")
+              }
+
+              private fun unwrap(v: BinValue?): BinValue? = when (v) {
+                  null -> null
+                  is BinValue.Ref -> unwrap(v.resolved)
+                  else -> v
+              }
+
+              private fun readUByte(): Int = buf.get().toInt() and 0xFF
+              private fun readSByte(): Int = buf.get().toInt()
+              private fun readInt32(): Int = buf.getInt()
+
+              private fun readString(len: Int): String {
+                  val off = buf.position()
+                  buf.position(off + len)
+                  return String(bytes, off, len, StandardCharsets.UTF_8)
+              }
+
+              private fun readLeaf(t: PrimTypeEnum): BinValue.Leaf {
+                  val off = buf.position()
+                  val raw: Any? = when (t) {
+                      PrimTypeEnum.Boolean -> readUByte() != 0
+                      PrimTypeEnum.Byte    -> readSByte()
+                      PrimTypeEnum.Char    -> readUByte().toChar()
+                      PrimTypeEnum.Double  -> buf.getDouble()
+                      PrimTypeEnum.Int16   -> buf.getShort().toInt()
+                      PrimTypeEnum.Int32   -> buf.getInt()
+                      PrimTypeEnum.Int64   -> buf.getLong()
+                      PrimTypeEnum.SByte   -> buf.get().toInt()
+                      PrimTypeEnum.Single  -> buf.getFloat()
+                      PrimTypeEnum.UInt16  -> readUByte() or (readUByte() shl 8)
+                      PrimTypeEnum.UInt32  -> buf.getInt().toLong() and 0xFFFF_FFFFL
+                      PrimTypeEnum.UInt64  -> buf.getLong()
+                      else -> error("Unsupported leaf type: $t")
+                  }
+                  val len = buf.position() - off
+                  val special = when {
+                      raw is Float  && raw.isNaN()      -> "NaN"
+                      raw is Float  && raw.isInfinite() -> if (raw > 0) "Infinity" else "-Infinity"
+                      raw is Double && raw.isNaN()      -> "NaN"
+                      raw is Double && raw.isInfinite() -> if (raw > 0) "Infinity" else "-Infinity"
+                      else -> null
+                  }
+                  return BinValue.Leaf(off, if (special != null) null else raw, len, t, special)
+              }
+
+              private fun readMemberValue(mt: MemberType): BinValue = when (mt.binaryType) {
+                  BinTypeEnum.Primitive -> readLeaf(mt.primitiveType!!)
+                  BinTypeEnum.String, BinTypeEnum.Class, BinTypeEnum.SystemClass,
+                  BinTypeEnum.Object, BinTypeEnum.PrimitiveArray,
+                  BinTypeEnum.StringArray -> parseRecord()
+                  BinTypeEnum.ObjectArray -> error("ObjectArray not implemented")
+              }
+
+              private fun parseRecord(): BinValue {
+                  val t = readUByte()
+                  return when (t) {
+                      0  -> parseSerializationHeader()
+                      1  -> parseClassWithId()
+                      4  -> parseClassWithMembersAndTypes(isSystem = true)
+                      5  -> parseClassWithMembersAndTypes(isSystem = false)
+                      6  -> parseBinaryObjectString()
+                      7  -> parseBinaryArray()
+                      9  -> parseMemberReference()
+                      10 -> BinValue.NullMultiple(1)
+                      11 -> BinValue.None
+                      12 -> parseBinaryLibrary()
+                      13 -> BinValue.NullMultiple(readUByte())
+                      14 -> BinValue.NullMultiple(readInt32())
+                      15 -> parseArraySinglePrimitive()
+                      17 -> parseArraySingleString()
+                      else -> error("Unknown record type 0x${t.toString(16)} at pos ${buf.position()-1}")
+                  }
+              }
+
+              private fun parseSerializationHeader(): BinValue {
+                  rootId = readInt32(); readInt32(); readInt32(); readInt32()
+                  return BinValue.None
+              }
+
+              private fun parseBinaryLibrary(): BinValue {
+                  readInt32(); readString(readUByte())
+                  return BinValue.None
+              }
+
+              private fun parseMemberReference(): BinValue.Ref {
+                  val id = readInt32()
+                  return BinValue.Ref(id).also { pendingRefs += it }
+              }
+
+              private fun parseBinaryObjectString(): BinValue.Str {
+                  val id = readInt32()
+                  val len = readUByte()
+                  val off = buf.position()
+                  val s = BinValue.Str(off, readString(len), len)
+                  objectIndex[id] = s
+                  return s
+              }
+
+              private fun parseClassWithMembersAndTypes(isSystem: Boolean): BinValue.Obj {
+                  val objId = readInt32()
+                  val className = readString(readUByte())
+                  val memberCount = readInt32()
+                  val memberNames = List(memberCount) { readString(readUByte()) }
+
+                  val binaryTypeEnums = List(memberCount) { BinTypeEnum.fromRaw(readUByte()) }
+                  val primitiveTypes = List(memberCount) { i ->
+                      when (binaryTypeEnums[i]) {
+                          BinTypeEnum.Primitive, BinTypeEnum.PrimitiveArray ->
+                              PrimTypeEnum.fromRaw(readUByte())
+                          BinTypeEnum.SystemClass -> { readString(readUByte()); null }
+                          BinTypeEnum.Class -> { readString(readUByte()); readInt32(); null }
+                          else -> null
+                      }
+                  }
+
+                  if (!isSystem) readInt32()
+
+                  val memberTypes = List(memberCount) { i ->
+                      MemberType(binaryTypeEnums[i], primitiveTypes[i])
+                  }
+                  val members = List(memberCount) { readMemberValue(memberTypes[it]) }
+                  return BinValue.Obj(className, memberNames, memberTypes, members)
+                      .also { objectIndex[objId] = it }
+              }
+
+              private fun parseClassWithId(): BinValue.Obj {
+                  val objId = readInt32()
+                  val metaId = readInt32()
+                  val existing = objectIndex[metaId] as? BinValue.Obj
+                      ?: error("ClassWithId: metadata $metaId not found")
+                  val members = List(existing.memberTypes.size) {
+                      readMemberValue(existing.memberTypes[it])
+                  }
+                  return BinValue.Obj(
+                      existing.className, existing.memberNames, existing.memberTypes, members
+                  ).also { objectIndex[objId] = it }
+              }
+
+              private fun parseBinaryArray(): BinValue.Arr {
+                  val objId = readInt32()
+                  val arrayType = readUByte()
+                  val rank = readInt32()
+                  val lengths = List(rank) { readInt32() }
+                  if (arrayType in 3..5) List(rank) { readInt32() }
+
+                  val typeEnum = BinTypeEnum.fromRaw(readUByte())
+                  val prim: PrimTypeEnum? = when (typeEnum) {
+                      BinTypeEnum.Primitive, BinTypeEnum.PrimitiveArray ->
+                          PrimTypeEnum.fromRaw(readUByte())
+                      BinTypeEnum.SystemClass -> { readString(readUByte()); null }
+                      BinTypeEnum.Class -> { readString(readUByte()); readInt32(); null }
+                      else -> null
+                  }
+                  val total = lengths.fold(1) { a, b -> a * b }
+                  val mt = MemberType(typeEnum, prim)
+
+                  val items = mutableListOf<BinValue>()
+                  while (items.size < total) {
+                      val v = readMemberValue(mt)
+                      if (v is BinValue.NullMultiple && v.count > 1) {
+                          repeat(v.count) {
+                              if (items.size < total) items.add(BinValue.NullMultiple(1))
+                          }
+                      } else items.add(v)
+                  }
+                  return BinValue.Arr(items, prim).also { objectIndex[objId] = it }
+              }
+
+              private fun parseArraySinglePrimitive(): BinValue.Arr {
+                  val objId = readInt32()
+                  val len = readInt32()
+                  val pt = PrimTypeEnum.fromRaw(readUByte())
+                  val items = List(len) { readLeaf(pt) }
+                  return BinValue.Arr(items, pt).also { objectIndex[objId] = it }
+              }
+
+              private fun parseArraySingleString(): BinValue.Arr {
+                  val objId = readInt32()
+                  val len = readInt32()
+                  val items = mutableListOf<BinValue>()
+                  while (items.size < len) {
+                      val v = parseRecord()
+                      if (v is BinValue.NullMultiple && v.count > 1) {
+                          repeat(v.count) {
+                              if (items.size < len) items.add(BinValue.NullMultiple(1))
+                          }
+                      } else items.add(v)
+                  }
+                  return BinValue.Arr(items, PrimTypeEnum.String).also { objectIndex[objId] = it }
+              }
+
+              fun extract(doc: BinValue.Obj): SaveDocument {
+                  val savedCharsValue = unwrap(doc.member("savedChars"))
+                  val savedChars = savedCharsValue as? BinValue.Arr
+                      ?: error(
+                          "savedChars not an Arr. raw=${savedCharsValue?.let { it::class.simpleName }}, " +
+                          "class=${doc.className}, members=${doc.memberNames}, rootId=$rootId"
+                      )
+                  val chars = mutableListOf<Character>()
+                  savedChars.items.forEachIndexed { idx, item ->
+                      val obj = unwrap(item) as? BinValue.Obj
+                      if (obj != null) chars.add(buildCharacter(idx, obj))
+                  }
+                  return SaveDocument(doc.className, chars)
+              }
+
+              private fun buildCharacter(arrayIndex: Int, obj: BinValue.Obj): Character {
+                  val nameValue = unwrap(obj.member("name"))
+                  val name = (nameValue as? BinValue.Str)?.value ?: ""
+
+                  val statsArr = unwrap(obj.member("stat")) as? BinValue.Arr
+                  val stats = statsArr?.items?.mapIndexedNotNull { i, v ->
+                      (unwrap(v) as? BinValue.Leaf)?.let {
+                          StatSlot(
+                              index = i,
+                              offset = it.offset,
+                              length = it.length,
+                              type = it.type,
+                              value = (it.value as? Number)?.toFloat() ?: 0f,
+                              special = it.special
+                          )
+                      }
+                  } ?: emptyList()
+
+                  val extraFieldNames = listOf(
+                      "age", "height", "armMass", "muscleMass", "bodyMass", "legMass"
+                  )
+                  val extraFields = extraFieldNames.mapNotNull { fieldName ->
+                      val leaf = unwrap(obj.member(fieldName)) as? BinValue.Leaf
+                          ?: return@mapNotNull null
+                      EditableLeaf(
+                          name = fieldName,
+                          offset = leaf.offset,
+                          length = leaf.length,
+                          type = leaf.type,
+                          value = (leaf.value as? Number)?.toFloat() ?: 0f,
+                          special = leaf.special
+                      )
+                  }
+
+                  return Character(
+                      arrayIndex, name, stats, extraFields,
+                      obj.memberNames.zip(obj.members).toMap()
+                  )
+              }
+          }
+          EOF
+
+      - name: Write SavePatcher.kt
+        run: |
+          cat > app/src/main/java/com/example/savetool/SavePatcher.kt << 'EOF'
+          package com.example.savetool
+
+          import java.nio.ByteBuffer
+          import java.nio.ByteOrder
+
+          data class StatEdit(
+              val offset: Int,
+              val length: Int,
+              val type: PrimTypeEnum,
+              val newValue: Float
+          )
+
+          object SavePatcher {
+              fun apply(original: ByteArray, edits: List<StatEdit>): ByteArray {
+                  if (edits.isEmpty()) return original.copyOf()
+                  val out = original.copyOf()
+                  val buf = ByteBuffer.wrap(out).order(ByteOrder.LITTLE_ENDIAN)
+                  for (e in edits) {
+                      val off = e.offset
+                      require(off >= 0 && off + e.length <= out.size) {
+                          "Offset out of range: 0x${off.toString(16)}"
+                      }
+                      buf.position(off)
+                      when (e.type) {
+                          PrimTypeEnum.Single -> buf.putFloat(e.newValue)
+                          PrimTypeEnum.Double -> buf.putDouble(e.newValue.toDouble())
+                          PrimTypeEnum.Int32  -> buf.putInt(e.newValue.toInt())
+                          PrimTypeEnum.Int64  -> buf.putLong(e.newValue.toLong())
+                          PrimTypeEnum.Int16  -> buf.putShort(e.newValue.toInt().toShort())
+                          PrimTypeEnum.UInt16 -> buf.putShort(e.newValue.toInt().toShort())
+                          PrimTypeEnum.UInt32 -> buf.putInt(e.newValue.toLong().toInt())
+                          PrimTypeEnum.UInt64 -> buf.putLong(e.newValue.toLong())
+                          PrimTypeEnum.Byte   -> buf.put(e.newValue.toInt().toByte())
+                          PrimTypeEnum.SByte  -> buf.put(e.newValue.toInt().toByte())
+                          PrimTypeEnum.Boolean-> buf.put(if (e.newValue != 0f) 1 else 0)
+                          else -> error("Unsupported patch type: ${e.type}")
+                      }
+                  }
+                  return out
+              }
+          }
+          EOF
+
+      - name: Write SaveSession.kt
+        run: |
+          cat > app/src/main/java/com/example/savetool/SaveSession.kt << 'EOF'
+          package com.example.savetool
+
+          class SaveSession private constructor(
+              val originalBytes: ByteArray,
+              val document: SaveDocument
+          ) {
+              private val edits = LinkedHashMap<Int, StatEdit>()
+
+              fun setValue(e: Editable, newValue: Float) {
+                  edits[e.offset] = StatEdit(e.offset, e.length, e.type, newValue)
+              }
+
+              fun setAllStatsOf(char: Character, newValue: Float) =
+                  char.stats.forEach { setValue(it, newValue) }
+
+              fun setAllStatsOfEveryone(newValue: Float) =
+                  document.characters.forEach { c -> c.stats.forEach { setValue(it, newValue) } }
+
+              fun currentValueOf(e: Editable): Float =
+                  edits[e.offset]?.newValue ?: e.value
+
+              fun editsCount(): Int = edits.size
+
+              fun clearEdits() = edits.clear()
+
+              fun buildPatchedBytes(): ByteArray =
+                  SavePatcher.apply(originalBytes, edits.values.toList())
+
+              companion object {
+                  fun load(saveBytes: ByteArray): SaveSession {
+                      val parser = SaveParser(saveBytes)
+                      val root = parser.parse()
+                      val doc = parser.extract(root)
+                      return SaveSession(saveBytes, doc)
+                  }
+              }
+          }
+          EOF
+
+      - name: Write SaveViewModel.kt
+        run: |
+          cat > app/src/main/java/com/example/savetool/SaveViewModel.kt << 'EOF'
+          package com.example.savetool
+
+          import android.content.Context
+          import android.net.Uri
+          import androidx.compose.runtime.getValue
+          import androidx.compose.runtime.mutableStateOf
+          import androidx.compose.runtime.setValue
+          import androidx.lifecycle.ViewModel
+          import androidx.lifecycle.viewModelScope
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.launch
+          import kotlinx.coroutines.withContext
+          import java.io.IOException
+
+          class SaveViewModel : ViewModel() {
+              var session by mutableStateOf<SaveSession?>(null)
+                  private set
+              var isLoading by mutableStateOf(false)
+                  private set
+              var error by mutableStateOf<String?>(null)
+                  private set
+              var editsVersion by mutableStateOf(0)
+                  private set
+
+              fun load(uri: Uri, context: Context) {
+                  viewModelScope.launch {
+                      try {
+                          isLoading = true
+                          error = null
+                          session = null
+                          val bytes = withContext(Dispatchers.IO) {
+                              context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                                  ?: throw IOException("نمی‌توان فایل را باز کرد")
+                          }
+                          val loaded = withContext(Dispatchers.IO) { SaveSession.load(bytes) }
+                          session = loaded
+                          editsVersion = 0
+                      } catch (e: Exception) {
+                          error = e.message ?: "خطای نامشخص"
+                      } finally {
+                          isLoading = false
+                      }
+                  }
+              }
+
+              fun setAllToEveryone(value: Float) {
+                  session?.setAllStatsOfEveryone(value)
+                  editsVersion++
+              }
+
+              fun setCharacterStats(char: Character, value: Float) {
+                  session?.setAllStatsOf(char, value)
+                  editsVersion++
+              }
+
+              fun setValue(e: Editable, value: Float) {
+                  session?.setValue(e, value)
+                  editsVersion++
+              }
+
+              fun currentValueOf(e: Editable): Float {
+                  @Suppress("UNUSED_EXPRESSION")
+                  editsVersion
+                  return session?.currentValueOf(e) ?: e.value
+              }
+
+              fun editsCount(): Int {
+                  @Suppress("UNUSED_EXPRESSION")
+                  editsVersion
+                  return session?.editsCount() ?: 0
+              }
+
+              fun clearEdits() {
+                  session?.clearEdits()
+                  editsVersion++
+              }
+
+              fun buildBytes(): ByteArray? = session?.buildPatchedBytes()
+          }
+          EOF
+
+      - name: Write MainActivity.kt
+        run: |
+          cat > app/src/main/java/com/example/savetool/MainActivity.kt << 'EOF'
+          package com.example.savetool
+
+          import android.net.Uri
+          import android.os.Bundle
+          import android.widget.Toast
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.rememberLauncherForActivityResult
+          import androidx.activity.compose.setContent
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.compose.foundation.clickable
+          import androidx.compose.foundation.layout.Box
+          import androidx.compose.foundation.layout.Column
+          import androidx.compose.foundation.layout.Row
+          import androidx.compose.foundation.layout.Spacer
+          import androidx.compose.foundation.layout.fillMaxSize
+          import androidx.compose.foundation.layout.fillMaxWidth
+          import androidx.compose.foundation.layout.height
+          import androidx.compose.foundation.layout.padding
+          import androidx.compose.foundation.layout.width
+          import androidx.compose.foundation.lazy.LazyColumn
+          import androidx.compose.foundation.lazy.items
+          import androidx.compose.foundation.text.KeyboardOptions
+          import androidx.compose.material3.AlertDialog
+          import androidx.compose.material3.BottomAppBar
+          import androidx.compose.material3.Button
+          import androidx.compose.material3.Card
+          import androidx.compose.material3.CircularProgressIndicator
+          import androidx.compose.material3.ExperimentalMaterial3Api
+          import androidx.compose.material3.IconButton
+          import androidx.compose.material3.MaterialTheme
+          import androidx.compose.material3.OutlinedTextField
+          import androidx.compose.material3.Scaffold
+          import androidx.compose.material3.Text
+          import androidx.compose.material3.TextButton
+          import androidx.compose.material3.TopAppBar
+          import androidx.compose.runtime.Composable
+          import androidx.compose.runtime.getValue
+          import androidx.compose.runtime.mutableStateOf
+          import androidx.compose.runtime.remember
+          import androidx.compose.runtime.rememberCoroutineScope
+          import androidx.compose.runtime.setValue
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.platform.LocalContext
+          import androidx.compose.ui.text.input.KeyboardType
+          import androidx.compose.ui.unit.dp
+          import androidx.lifecycle.viewmodel.compose.viewModel
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.launch
+          import kotlinx.coroutines.withContext
+
+          class MainActivity : ComponentActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContent {
+                      MaterialTheme {
+                          SaveEditorApp()
+                      }
+                  }
+              }
+          }
+
+          @OptIn(ExperimentalMaterial3Api::class)
+          @Composable
+          fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
+              val context = LocalContext.current
+              val scope = rememberCoroutineScope()
+              var selectedCharIndex by remember { mutableStateOf<Int?>(null) }
+
+              val openLauncher = rememberLauncherForActivityResult(
+                  ActivityResultContracts.OpenDocument()
+              ) { uri: Uri? ->
+                  if (uri != null) {
+                      selectedCharIndex = null
+                      vm.load(uri, context)
+                  }
+              }
+
+              val saveLauncher = rememberLauncherForActivityResult(
+                  ActivityResultContracts.CreateDocument("application/octet-stream")
+              ) { uri: Uri? ->
+                  if (uri != null) {
+                      val bytes = vm.buildBytes()
+                      if (bytes != null) {
+                          scope.launch {
+                              try {
+                                  withContext(Dispatchers.IO) {
+                                      context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                                          ?: throw java.io.IOException("cannot open output")
+                                  }
+                                  withContext(Dispatchers.Main) {
+                                      Toast.makeText(
+                                          context,
+                                          "✓ ذخیره شد (${vm.editsCount()} تغییر)",
+                                          Toast.LENGTH_LONG
+                                      ).show()
+                                  }
+                              } catch (e: Exception) {
+                                  withContext(Dispatchers.Main) {
+                                      Toast.makeText(context, "خطا: ${e.message}", Toast.LENGTH_LONG).show()
+                                  }
+                              }
+                          }
+                      }
+                  }
+              }
+
+              val characters = vm.session?.document?.characters.orEmpty()
+              val selectedChar = selectedCharIndex?.let { idx ->
+                  characters.firstOrNull { it.arrayIndex == idx }
+              }
+
+              Scaffold(
+                  topBar = {
+                      TopAppBar(
+                          title = {
+                              Text(selectedChar?.name?.ifEmpty { "بدون نام" } ?: "Save Editor")
+                          },
+                          navigationIcon = {
+                              if (selectedChar != null) {
+                                  IconButton(onClick = { selectedCharIndex = null }) {
+                                      Text("←", style = MaterialTheme.typography.titleLarge)
+                                  }
+                              }
+                          }
+                      )
+                  },
+                  bottomBar = {
+                      if (vm.session != null) {
+                          BottomAppBar {
+                              Row(
+                                  Modifier
+                                      .fillMaxWidth()
+                                      .padding(horizontal = 12.dp, vertical = 8.dp),
+                                  verticalAlignment = Alignment.CenterVertically
+                              ) {
+                                  Text("${vm.editsCount()} تغییر", Modifier.weight(1f))
+                                  Button(
+                                      onClick = { saveLauncher.launch("Save.bytes.patched") },
+                                      enabled = vm.editsCount() > 0
+                                  ) {
+                                      Text("ذخیره")
+                                  }
+                              }
+                          }
+                      }
+                  }
+              ) { padding ->
+                  Box(
+                      Modifier
+                          .padding(padding)
+                          .fillMaxSize()
+                  ) {
+                      when {
+                          vm.isLoading -> {
+                              Column(
+                                  Modifier.align(Alignment.Center),
+                                  horizontalAlignment = Alignment.CenterHorizontally
+                              ) {
+                                  CircularProgressIndicator()
+                                  Spacer(Modifier.height(16.dp))
+                                  Text("در حال خواندن فایل...")
+                              }
+                          }
+                          vm.error != null -> {
+                              Column(
+                                  Modifier
+                                      .align(Alignment.Center)
+                                      .padding(24.dp),
+                                  horizontalAlignment = Alignment.CenterHorizontally
+                              ) {
+                                  Text("خطا", style = MaterialTheme.typography.titleLarge)
+                                  Spacer(Modifier.height(8.dp))
+                                  Text(vm.error!!, style = MaterialTheme.typography.bodyMedium)
+                                  Spacer(Modifier.height(16.dp))
+                                  Button(onClick = { openLauncher.launch(arrayOf("*/*")) }) {
+                                      Text("انتخاب فایل دیگر")
+                                  }
+                              }
+                          }
+                          vm.session == null -> {
+                              Column(
+                                  Modifier
+                                      .align(Alignment.Center)
+                                      .padding(24.dp),
+                                  horizontalAlignment = Alignment.CenterHorizontally
+                              ) {
+                                  Text(
+                                      "فایل Save.bytes را انتخاب کنید",
+                                      style = MaterialTheme.typography.titleMedium
+                                  )
+                                  Spacer(Modifier.height(16.dp))
+                                  Button(onClick = { openLauncher.launch(arrayOf("*/*")) }) {
+                                      Text("📂 انتخاب فایل")
+                                  }
+                              }
+                          }
+                          selectedChar != null -> {
+                              CharacterDetailScreen(vm = vm, char = selectedChar)
+                          }
+                          else -> {
+                              CharacterListScreen(
+                                  vm = vm,
+                                  characters = characters,
+                                  onSelect = { selectedCharIndex = it.arrayIndex }
+                              )
+                          }
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun CharacterListScreen(
+              vm: SaveViewModel,
+              characters: List<Character>,
+              onSelect: (Character) -> Unit
+          ) {
+              var searchQuery by remember { mutableStateOf("") }
+              val filtered = remember(characters, searchQuery) {
+                  if (searchQuery.isBlank()) characters
+                  else characters.filter { it.name.contains(searchQuery, ignoreCase = true) }
+              }
+
+              Column(Modifier.fillMaxSize()) {
+                  OutlinedTextField(
+                      value = searchQuery,
+                      onValueChange = { searchQuery = it },
+                      modifier = Modifier
+                          .fillMaxWidth()
+                          .padding(horizontal = 12.dp, vertical = 8.dp),
+                      label = { Text("🔍 جستجوی اسم") },
+                      singleLine = true
+                  )
+                  Button(
+                      onClick = { vm.setAllToEveryone(-1000f) },
+                      modifier = Modifier
+                          .fillMaxWidth()
+                          .padding(horizontal = 12.dp, vertical = 4.dp)
+                  ) {
+                      Text("⚡ همه‌ی استت‌ها → -1000.0")
+                  }
+                  Text(
+                      "${filtered.size} از ${characters.size} شخصیت",
+                      Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                      style = MaterialTheme.typography.bodySmall
+                  )
+                  if (filtered.isEmpty()) {
+                      Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                          Text(if (characters.isEmpty()) "شخصیتی یافت نشد" else "نتیجه‌ای برای جستجو نیست")
+                      }
+                  } else {
+                      LazyColumn(Modifier.fillMaxSize()) {
+                          items(filtered) { char ->
+                              Card(
+                                  modifier = Modifier
+                                      .fillMaxWidth()
+                                      .padding(horizontal = 12.dp, vertical = 4.dp)
+                                      .clickable { onSelect(char) }
+                              ) {
+                                  Column(Modifier.padding(16.dp)) {
+                                      Text(
+                                          char.name.ifEmpty { "(بدون نام)" },
+                                          style = MaterialTheme.typography.titleMedium
+                                      )
+                                      Spacer(Modifier.height(4.dp))
+                                      Text(
+                                          "${char.stats.size} استت — ایندکس #${char.arrayIndex}",
+                                          style = MaterialTheme.typography.bodySmall
+                                      )
+                                  }
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun CharacterDetailScreen(vm: SaveViewModel, char: Character) {
+              Column(Modifier.fillMaxSize()) {
+                  Button(
+                      onClick = { vm.setCharacterStats(char, 1000f) },
+                      modifier = Modifier
+                          .fillMaxWidth()
+                          .padding(12.dp)
+                  ) {
+                      Text("⚡ همه‌ی استت‌های این شخصیت → 1000.0")
+                  }
+                  LazyColumn(Modifier.fillMaxSize()) {
+                      if (char.extraFields.isNotEmpty()) {
+                          item {
+                              Text(
+                                  "مشخصات",
+                                  Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                  style = MaterialTheme.typography.titleSmall
+                              )
+                          }
+                          items(char.extraFields) { f ->
+                              EditableRow(vm, f, label = f.name)
+                          }
+                      }
+                      if (char.stats.isNotEmpty()) {
+                          item {
+                              Text(
+                                  "استت‌ها (${char.stats.size})",
+                                  Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                  style = MaterialTheme.typography.titleSmall
+                              )
+                          }
+                          items(char.stats) { slot ->
+                              EditableRow(vm, slot, label = "stat[${slot.index}]")
+                          }
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun EditableRow(vm: SaveViewModel, e: Editable, label: String) {
+              var dialogOpen by remember { mutableStateOf(false) }
+              val currentValue = vm.currentValueOf(e)
+              Row(
+                  Modifier
+                      .fillMaxWidth()
+                      .padding(horizontal = 12.dp, vertical = 4.dp),
+                  verticalAlignment = Alignment.CenterVertically
+              ) {
+                  Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                  Text(
+                      formatValue(currentValue, e.type),
+                      Modifier.width(100.dp),
+                      style = MaterialTheme.typography.bodyMedium
+                  )
+                  TextButton(onClick = { dialogOpen = true }) { Text("ویرایش") }
+              }
+              if (dialogOpen) {
+                  EditStatDialog(
+                      currentValue = currentValue,
+                      type = e.type,
+                      label = label,
+                      onDismiss = { dialogOpen = false },
+                      onConfirm = { v ->
+                          vm.setValue(e, v)
+                          dialogOpen = false
+                      }
+                  )
+              }
+          }
+
+          @Composable
+          fun EditStatDialog(
+              currentValue: Float,
+              type: PrimTypeEnum,
+              label: String,
+              onDismiss: () -> Unit,
+              onConfirm: (Float) -> Unit
+          ) {
+              var text by remember { mutableStateOf(formatValue(currentValue, type)) }
+              val parsed = text.replace(',', '.').toFloatOrNull()
+
+              AlertDialog(
+                  onDismissRequest = onDismiss,
+                  title = { Text("ویرایش $label") },
+                  text = {
+                      Column {
+                          Text(
+                              "مقدار فعلی: ${formatValue(currentValue, type)}",
+                              style = MaterialTheme.typography.bodySmall
+                          )
+                          Spacer(Modifier.height(8.dp))
+                          OutlinedTextField(
+                              value = text,
+                              onValueChange = { text = it },
+                              keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                              isError = parsed == null,
+                              singleLine = true,
+                              label = { Text("مقدار جدید") }
+                          )
+                      }
+                  },
+                  confirmButton = {
+                      TextButton(
+                          onClick = { parsed?.let(onConfirm) },
+                          enabled = parsed != null
+                      ) { Text("تأیید") }
+                  },
+                  dismissButton = {
+                      TextButton(onClick = onDismiss) { Text("انصراف") }
+                  }
+              )
+          }
+          EOF
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.5
+
+      - name: Ensure Gradle Wrapper
+        run: |
+          if [ ! -s gradlew ]; then
+            echo "Generating wrapper..."
+            gradle wrapper --gradle-version 8.5
+          fi
+          chmod +x gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: save-editor-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Commit and Push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --staged --quiet || git commit -m "feat: search + extra fields [skip ci]"
+          git push
