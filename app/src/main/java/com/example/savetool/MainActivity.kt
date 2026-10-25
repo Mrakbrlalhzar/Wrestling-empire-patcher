@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -53,10 +54,10 @@ fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
                             context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: throw java.io.IOException("open fail")
                         }
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "✓ ذخیره شد (${vm.editsCount()} تغییر)", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, "✓ Saved (${vm.editsCount()} changes)", Toast.LENGTH_LONG).show()
                         }
                     } catch (e: Exception) {
-                        withContext(Dispatchers.Main) { Toast.makeText(context, "خطا: ${e.message}", Toast.LENGTH_LONG).show() }
+                        withContext(Dispatchers.Main) { Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show() }
                     }
                 }
             }
@@ -68,7 +69,7 @@ fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
         topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface, titleContentColor = MaterialTheme.colorScheme.primary),
-                title = { Text(selectedChar?.name?.ifEmpty { "بدون نام" } ?: "Save Editor", fontWeight = FontWeight.Bold) },
+                title = { Text(selectedChar?.name?.ifEmpty { "Unnamed" } ?: "Save Editor", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     if (selectedChar != null) IconButton(onClick = { selectedCharIndex = null }) { Text("←", style = MaterialTheme.typography.headlineSmall) }
                 },
@@ -79,8 +80,8 @@ fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
             if (vm.session != null) {
                 BottomAppBar(containerColor = MaterialTheme.colorScheme.surface) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("${vm.editsCount()} تغییر", Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Button(onClick = { saveLauncher.launch("Save.bytes.patched") }, enabled = vm.editsCount() > 0, shape = RoundedCornerShape(12.dp)) { Text("💾 ذخیره") }
+                        Text("${vm.editsCount()} changes", Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Button(onClick = { saveLauncher.launch("Save.bytes.patched") }, enabled = vm.editsCount() > 0, shape = RoundedCornerShape(12.dp)) { Text("💾 Save") }
                     }
                 }
             }
@@ -89,18 +90,18 @@ fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
         Box(Modifier.padding(padding).fillMaxSize()) {
             when {
                 vm.isLoading -> Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(); Spacer(Modifier.height(16.dp)); Text("در حال خواندن فایل...")
+                    CircularProgressIndicator(); Spacer(Modifier.height(16.dp)); Text("Loading file...")
                 }
                 vm.error != null -> Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("خطا", style = MaterialTheme.typography.titleLarge); Spacer(Modifier.height(8.dp))
+                    Text("Error", style = MaterialTheme.typography.titleLarge); Spacer(Modifier.height(8.dp))
                     Text(vm.error!!, style = MaterialTheme.typography.bodyMedium); Spacer(Modifier.height(16.dp))
-                    Button(onClick = { openLauncher.launch(arrayOf("*/*")) }) { Text("انتخاب فایل دیگر") }
+                    Button(onClick = { openLauncher.launch(arrayOf("*/*")) }) { Text("Pick another file") }
                 }
                 vm.session == null -> Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("❤", style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.height(16.dp)); Text("فایل Save.bytes را انتخاب کنید", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(16.dp)); Text("Select a Save.bytes file", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(20.dp))
-                    Button(onClick = { openLauncher.launch(arrayOf("*/*")) }, shape = RoundedCornerShape(12.dp)) { Text("📂 انتخاب فایل") }
+                    Button(onClick = { openLauncher.launch(arrayOf("*/*")) }, shape = RoundedCornerShape(12.dp)) { Text("📂 Pick file") }
                 }
                 selectedChar != null -> CharacterDetailScreen(vm = vm, char = selectedChar)
                 else -> CharacterListScreen(vm = vm, characters = characters, onSelect = { selectedCharIndex = it.arrayIndex })
@@ -115,12 +116,12 @@ fun AboutDialog(onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Text("❤", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary) },
-        title = { Text("درباره") },
+        title = { Text("About") },
         text = {
-            Column {
+            Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
                 Text("It's made with ♥ in Iran", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.height(20.dp))
-                Text("سازنده", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(16.dp))
+                Text("Made by", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(6.dp))
                 Text("Mrakbrlalhzar",
                     modifier = Modifier.clickable {
@@ -129,10 +130,29 @@ fun AboutDialog(onDismiss: () -> Unit) {
                     style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
                 Text("github.com/Mrakbrlalhzar", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(18.dp))
+                Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outline))
+                Spacer(Modifier.height(14.dp))
+                Text("📖 Step-by-step guide", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(10.dp))
+                GuideStep("1.", "Tap 📂 Pick file and select Save.bytes")
+                GuideStep("2.", "Tap ⚡ All stats → -1000.0 to zero out every character")
+                GuideStep("3.", "Tap any character to edit their stats one by one")
+                GuideStep("4.", "Or use checkboxes + ⚡ Bulk edit to edit many at once")
+                GuideStep("5.", "Tap 💾 Save when finished")
+                GuideStep("6.", "Replace the original Save.bytes with the new file")
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("بستن") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
     )
+}
+@Composable
+fun GuideStep(num: String, text: String) {
+    Row(Modifier.padding(vertical = 3.dp)) {
+        Text(num, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.width(8.dp))
+        Text(text, style = MaterialTheme.typography.bodyMedium)
+    }
 }
 @Composable
 fun CharacterListScreen(vm: SaveViewModel, characters: List<Character>, onSelect: (Character) -> Unit) {
@@ -145,13 +165,13 @@ fun CharacterListScreen(vm: SaveViewModel, characters: List<Character>, onSelect
     Column(Modifier.fillMaxSize()) {
         OutlinedTextField(value = searchQuery, onValueChange = { searchQuery = it },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            label = { Text("🔍 جستجوی اسم") }, singleLine = true, shape = RoundedCornerShape(14.dp))
+            label = { Text("🔍 Search by name") }, singleLine = true, shape = RoundedCornerShape(14.dp))
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             FilledTonalButton(onClick = { vm.selectAllVisible(visibleIndices) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
-                Text("✓ همه", style = MaterialTheme.typography.bodyMedium)
+                Text("✓ All", style = MaterialTheme.typography.bodyMedium)
             }
             FilledTonalButton(onClick = { vm.invertVisible(visibleIndices) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
-                Text("⇄ برعکس", style = MaterialTheme.typography.bodyMedium)
+                Text("⇄ Invert", style = MaterialTheme.typography.bodyMedium)
             }
             if (vm.selectedIndices.isNotEmpty()) {
                 FilledTonalButton(onClick = { vm.clearSelection() }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp),
@@ -164,20 +184,20 @@ fun CharacterListScreen(vm: SaveViewModel, characters: List<Character>, onSelect
         Column(Modifier.padding(horizontal = 12.dp)) {
             Button(onClick = { vm.setAllToEveryone(-1000f) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError)) {
-                Text("⚡ همه‌ی استت‌ها → -1000.0", fontWeight = FontWeight.Bold)
+                Text("⚡ All stats → -1000.0", fontWeight = FontWeight.Bold)
             }
             if (vm.selectedIndices.isNotEmpty()) {
                 Spacer(Modifier.height(6.dp))
                 Button(onClick = { showBulkDialog = true }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
-                    Text("⚡ ${vm.selectedIndices.size} انتخاب‌شده → ویرایش گروهی", fontWeight = FontWeight.Bold)
+                    Text("⚡ ${vm.selectedIndices.size} selected → Bulk edit", fontWeight = FontWeight.Bold)
                 }
             }
         }
-        Text("${filtered.size} از ${characters.size} شخصیت", Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+        Text("${filtered.size} of ${characters.size} characters", Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (filtered.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(if (characters.isEmpty()) "شخصیتی یافت نشد" else "نتیجه‌ای برای جستجو نیست", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (characters.isEmpty()) "No characters found" else "No search results", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -201,11 +221,11 @@ fun CharacterCard(char: Character, isSelected: Boolean, onToggleSelect: () -> Un
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = isSelected, onCheckedChange = { onToggleSelect() })
             Column(Modifier.weight(1f).clickable { onClick() }.padding(vertical = 8.dp, horizontal = 6.dp)) {
-                Text(char.name.ifEmpty { "(بدون نام)" }, style = MaterialTheme.typography.titleMedium,
+                Text(char.name.ifEmpty { "(Unnamed)" }, style = MaterialTheme.typography.titleMedium,
                     color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(2.dp))
-                Text("${char.stats.size} استت — #${char.arrayIndex}", style = MaterialTheme.typography.bodySmall,
+                Text("${char.stats.size} stats — #${char.arrayIndex}", style = MaterialTheme.typography.bodySmall,
                     color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Text("›", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -223,18 +243,18 @@ fun BulkEditDialog(count: Int, onDismiss: () -> Unit, onConfirm: (BulkChange) ->
     var bodyMassText by remember { mutableStateOf("") }
     var legMassText by remember { mutableStateOf("") }
     val quickValues = listOf("-1000", "0", "1000", "10000", "99999")
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("ویرایش گروهی $count شخصیت") },
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Bulk edit $count characters") },
         text = {
             Column(Modifier.height(420.dp).verticalScroll(rememberScrollState())) {
-                Text("استت‌ها:", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text("Stats:", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = applyStats, onCheckedChange = { applyStats = it })
-                    Text("اعمال روی statها", style = MaterialTheme.typography.bodyMedium)
+                    Text("Apply to stats", style = MaterialTheme.typography.bodyMedium)
                 }
                 if (applyStats) {
                     OutlinedTextField(value = statsText, onValueChange = { statsText = it },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true,
-                        shape = RoundedCornerShape(12.dp), label = { Text("مقدار stat") }, modifier = Modifier.fillMaxWidth())
+                        shape = RoundedCornerShape(12.dp), label = { Text("Stat value") }, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(4.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         quickValues.take(3).forEach { q -> FilledTonalButton(onClick = { statsText = q }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) { Text(q, style = MaterialTheme.typography.bodySmall) } }
@@ -244,7 +264,7 @@ fun BulkEditDialog(count: Int, onDismiss: () -> Unit, onConfirm: (BulkChange) ->
                     }
                 }
                 Spacer(Modifier.height(16.dp))
-                Text("فیلدهای اضافی (خالی = بدون تغییر):", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text("Extra fields (empty = unchanged):", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.height(6.dp))
                 OutlinedTextField(value = ageText, onValueChange = { ageText = it }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, shape = RoundedCornerShape(12.dp), label = { Text("age") }, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(4.dp))
@@ -270,24 +290,24 @@ fun BulkEditDialog(count: Int, onDismiss: () -> Unit, onConfirm: (BulkChange) ->
                 bodyMassText.replace(',', '.').toFloatOrNull()?.let { extras["bodyMass"] = it }
                 legMassText.replace(',', '.').toFloatOrNull()?.let { extras["legMass"] = it }
                 onConfirm(BulkChange(statsVal, extras))
-            }) { Text("اعمال") }
+            }) { Text("Apply") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } })
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
 @Composable
 fun CharacterDetailScreen(vm: SaveViewModel, char: Character) {
     Column(Modifier.fillMaxSize()) {
         Button(onClick = { vm.setCharacterStats(char, 1000f) },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp), shape = RoundedCornerShape(12.dp)) {
-            Text("⚡ همه‌ی استت‌های این شخصیت → 1000.0", fontWeight = FontWeight.Bold)
+            Text("⚡ All stats of this character → 1000.0", fontWeight = FontWeight.Bold)
         }
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
             if (char.extraFields.isNotEmpty()) {
-                item { Text("📊 مشخصات", Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) }
+                item { Text("📊 Attributes", Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) }
                 items(char.extraFields) { f -> EditableRow(vm, f, label = f.name) }
             }
             if (char.stats.isNotEmpty()) {
-                item { Text("💪 استت‌ها (${char.stats.size})", Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) }
+                item { Text("💪 Stats (${char.stats.size})", Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) }
                 items(char.stats) { slot -> EditableRow(vm, slot, label = "stat[${slot.index}]") }
             }
         }
@@ -302,7 +322,7 @@ fun EditableRow(vm: SaveViewModel, e: Editable, label: String) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
             Text(formatValue(currentValue, e.type), Modifier.width(90.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary)
-            TextButton(onClick = { dialogOpen = true }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) { Text("ویرایش") }
+            TextButton(onClick = { dialogOpen = true }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) { Text("Edit") }
         }
     }
     if (dialogOpen) {
@@ -314,15 +334,15 @@ fun EditableRow(vm: SaveViewModel, e: Editable, label: String) {
 fun EditStatDialog(currentValue: Float, type: PrimTypeEnum, label: String, onDismiss: () -> Unit, onConfirm: (Float) -> Unit) {
     var text by remember { mutableStateOf(formatValue(currentValue, type)) }
     val parsed = text.replace(',', '.').toFloatOrNull()
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("ویرایش $label") },
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Edit $label") },
         text = {
             Column {
-                Text("مقدار فعلی: ${formatValue(currentValue, type)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Current: ${formatValue(currentValue, type)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(10.dp))
                 OutlinedTextField(value = text, onValueChange = { text = it }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    isError = parsed == null, singleLine = true, shape = RoundedCornerShape(12.dp), label = { Text("مقدار جدید") })
+                    isError = parsed == null, singleLine = true, shape = RoundedCornerShape(12.dp), label = { Text("New value") })
             }
         },
-        confirmButton = { TextButton(onClick = { parsed?.let(onConfirm) }, enabled = parsed != null) { Text("تأیید") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } })
+        confirmButton = { TextButton(onClick = { parsed?.let(onConfirm) }, enabled = parsed != null) { Text("OK") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
