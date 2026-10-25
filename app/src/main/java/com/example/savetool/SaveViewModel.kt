@@ -13,15 +13,12 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 
 class SaveViewModel : ViewModel() {
-
     var session by mutableStateOf<SaveSession?>(null)
         private set
     var isLoading by mutableStateOf(false)
         private set
     var error by mutableStateOf<String?>(null)
         private set
-
-    /** برای trigger کردن recomposition وقتی edits تغییر می‌کنه */
     var editsVersion by mutableStateOf(0)
         private set
 
@@ -31,13 +28,11 @@ class SaveViewModel : ViewModel() {
                 isLoading = true
                 error = null
                 session = null
-
                 val bytes = withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                         ?: throw IOException("نمی‌توان فایل را باز کرد")
                 }
                 val loaded = withContext(Dispatchers.IO) { SaveSession.load(bytes) }
-
                 session = loaded
                 editsVersion = 0
             } catch (e: Exception) {
@@ -46,12 +41,6 @@ class SaveViewModel : ViewModel() {
                 isLoading = false
             }
         }
-    }
-
-    fun reset() {
-        session = null
-        error = null
-        editsVersion = 0
     }
 
     fun setAllToEveryone(value: Float) {
@@ -64,15 +53,15 @@ class SaveViewModel : ViewModel() {
         editsVersion++
     }
 
-    fun setStat(slot: StatSlot, value: Float) {
-        session?.setStat(slot, value)
+    fun setValue(e: Editable, value: Float) {
+        session?.setValue(e, value)
         editsVersion++
     }
 
-    fun currentValueOf(slot: StatSlot): Float {
+    fun currentValueOf(e: Editable): Float {
         @Suppress("UNUSED_EXPRESSION")
         editsVersion
-        return session?.currentValueOf(slot) ?: slot.value
+        return session?.currentValueOf(e) ?: e.value
     }
 
     fun editsCount(): Int {

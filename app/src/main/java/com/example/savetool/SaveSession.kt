@@ -6,18 +6,18 @@ class SaveSession private constructor(
 ) {
     private val edits = LinkedHashMap<Int, StatEdit>()
 
-    fun setStat(slot: StatSlot, newValue: Float) {
-        edits[slot.offset] = StatEdit(slot, newValue)
+    fun setValue(e: Editable, newValue: Float) {
+        edits[e.offset] = StatEdit(e.offset, e.length, e.type, newValue)
     }
 
     fun setAllStatsOf(char: Character, newValue: Float) =
-        char.stats.forEach { setStat(it, newValue) }
+        char.stats.forEach { setValue(it, newValue) }
 
     fun setAllStatsOfEveryone(newValue: Float) =
-        document.characters.forEach { c -> c.stats.forEach { setStat(it, newValue) } }
+        document.characters.forEach { c -> c.stats.forEach { setValue(it, newValue) } }
 
-    fun currentValueOf(slot: StatSlot): Float =
-        edits[slot.offset]?.newValue ?: slot.value
+    fun currentValueOf(e: Editable): Float =
+        edits[e.offset]?.newValue ?: e.value
 
     fun editsCount(): Int = edits.size
 

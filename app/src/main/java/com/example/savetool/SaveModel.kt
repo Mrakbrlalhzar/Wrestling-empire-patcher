@@ -50,19 +50,37 @@ enum class PrimTypeEnum(val raw: Int, val size: Int) {
     }
 }
 
+interface Editable {
+    val offset: Int
+    val length: Int
+    val type: PrimTypeEnum
+    val value: Float
+    val special: String?
+}
+
 data class StatSlot(
     val index: Int,
-    val offset: Int,
-    val length: Int,
-    val type: PrimTypeEnum,
-    val value: Float,
-    val special: String? = null
-)
+    override val offset: Int,
+    override val length: Int,
+    override val type: PrimTypeEnum,
+    override val value: Float,
+    override val special: String? = null
+) : Editable
+
+data class EditableLeaf(
+    val name: String,
+    override val offset: Int,
+    override val length: Int,
+    override val type: PrimTypeEnum,
+    override val value: Float,
+    override val special: String? = null
+) : Editable
 
 data class Character(
     val arrayIndex: Int,
     val name: String,
     val stats: List<StatSlot>,
+    val extraFields: List<EditableLeaf>,
     val fields: Map<String, BinValue>
 )
 
@@ -73,3 +91,11 @@ data class SaveDocument(
 
 fun BinValue.Obj.member(name: String): BinValue? =
     memberNames.indexOf(name).takeIf { it >= 0 }?.let { members[it] }
+
+fun formatValue(value: Float, type: PrimTypeEnum): String = when (type) {
+    PrimTypeEnum.Int32, PrimTypeEnum.Int64, PrimTypeEnum.Int16,
+    PrimTypeEnum.UInt32, PrimTypeEnum.UInt64, PrimTypeEnum.UInt16,
+    PrimTypeEnum.Byte, PrimTypeEnum.SByte -> value.toInt().toString()
+    PrimTypeEnum.Boolean -> if (value != 0f) "true" else "false"
+    else -> "%.2f".format(value)
+}

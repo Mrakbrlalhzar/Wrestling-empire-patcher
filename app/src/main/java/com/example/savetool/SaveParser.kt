@@ -17,7 +17,6 @@ class SaveParser(private val bytes: ByteArray) {
             ?: error("Root object (id=$rootId) not found")
     }
 
-    /** دنبال کردن زنجیره‌ی Refها تا رسیدن به مقدار واقعی */
     private fun unwrap(v: BinValue?): BinValue? = when (v) {
         null -> null
         is BinValue.Ref -> unwrap(v.resolved)
@@ -208,18 +207,13 @@ class SaveParser(private val bytes: ByteArray) {
         return BinValue.Arr(items, PrimTypeEnum.String).also { objectIndex[objId] = it }
     }
 
-    // ============ extract با unwrap ============
     fun extract(doc: BinValue.Obj): SaveDocument {
         val savedCharsValue = unwrap(doc.member("savedChars"))
         val savedChars = savedCharsValue as? BinValue.Arr
             ?: error(
-                "savedChars not an Arr. " +
-                "raw=${savedCharsValue?.let { it::class.simpleName }}, " +
-                "class=${doc.className}, " +
-                "members=${doc.memberNames}, " +
-                "rootId=$rootId"
+                "savedChars not an Arr. raw=${savedCharsValue?.let { it::class.simpleName }}, " +
+                "class=${doc.className}, members=${doc.memberNames}, rootId=$rootId"
             )
-
         val chars = mutableListOf<Character>()
         savedChars.items.forEachIndexed { idx, item ->
             val obj = unwrap(item) as? BinValue.Obj
@@ -246,8 +240,24 @@ class SaveParser(private val bytes: ByteArray) {
             }
         } ?: emptyList()
 
+        val extraFieldNames = listOf(
+            "age", "height", "armMass", "muscleMass", "bodyMass", "legMass"
+        )
+        val extraFields = extraFieldNames.mapNotNull { fieldName ->
+            val leaf = unwrap(obj.member(fieldName)) as? BinValue.Leaf
+                ?: return@mapNotNull null
+            EditableLeaf(
+                name = fieldName,
+                offset = leaf.offset,
+                length = leaf.length,
+                type = leaf.type,
+                value = (leaf.value as? Number)?.toFloat() ?: 0f,
+                special = leaf.special
+            )
+        }
+
         return Character(
-            arrayIndex, name, stats,
+            arrayIndex, name, stats, extraFields,
             obj.memberNames.zip(obj.members).toMap()
         )
     }

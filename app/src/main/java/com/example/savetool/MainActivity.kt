@@ -8,7 +8,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -163,7 +162,6 @@ fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
                         Text("در حال خواندن فایل...")
                     }
                 }
-
                 vm.error != null -> {
                     Column(
                         Modifier
@@ -180,7 +178,6 @@ fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
                         }
                     }
                 }
-
                 vm.session == null -> {
                     Column(
                         Modifier
@@ -198,15 +195,9 @@ fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
                         }
                     }
                 }
-
                 selectedChar != null -> {
-                    CharacterDetailScreen(
-                        vm = vm,
-                        char = selectedChar,
-                        onBack = { selectedCharIndex = null }
-                    )
+                    CharacterDetailScreen(vm = vm, char = selectedChar)
                 }
-
                 else -> {
                     CharacterListScreen(
                         vm = vm,
@@ -225,22 +216,42 @@ fun CharacterListScreen(
     characters: List<Character>,
     onSelect: (Character) -> Unit
 ) {
+    var searchQuery by remember { mutableStateOf("") }
+    val filtered = remember(characters, searchQuery) {
+        if (searchQuery.isBlank()) characters
+        else characters.filter { it.name.contains(searchQuery, ignoreCase = true) }
+    }
+
     Column(Modifier.fillMaxSize()) {
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            label = { Text("🔍 جستجوی اسم") },
+            singleLine = true
+        )
         Button(
             onClick = { vm.setAllToEveryone(-1000f) },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp)
+                .padding(horizontal = 12.dp, vertical = 4.dp)
         ) {
             Text("⚡ همه‌ی استت‌ها → -1000.0")
         }
-        if (characters.isEmpty()) {
+        Text(
+            "${filtered.size} از ${characters.size} شخصیت",
+            Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.bodySmall
+        )
+        if (filtered.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("شخصیتی یافت نشد")
+                Text(if (characters.isEmpty()) "شخصیتی یافت نشد" else "نتیجه‌ای برای جستجو نیست")
             }
         } else {
             LazyColumn(Modifier.fillMaxSize()) {
-                items(characters) { char ->
+                items(filtered) { char ->
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -266,11 +277,7 @@ fun CharacterListScreen(
 }
 
 @Composable
-fun CharacterDetailScreen(
-    vm: SaveViewModel,
-    char: Character,
-    onBack: () -> Unit
-) {
+fun CharacterDetailScreen(vm: SaveViewModel, char: Character) {
     Column(Modifier.fillMaxSize()) {
         Button(
             onClick = { vm.setCharacterStats(char, 1000f) },
@@ -280,14 +287,29 @@ fun CharacterDetailScreen(
         ) {
             Text("⚡ همه‌ی استت‌های این شخصیت → 1000.0")
         }
-        if (char.stats.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("این شخصیت استت ندارد")
+        LazyColumn(Modifier.fillMaxSize()) {
+            if (char.extraFields.isNotEmpty()) {
+                item {
+                    Text(
+                        "مشخصات",
+                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                }
+                items(char.extraFields) { f ->
+                    EditableRow(vm, f, label = f.name)
+                }
             }
-        } else {
-            LazyColumn(Modifier.fillMaxSize()) {
-                items(char.stats.size) { i ->
-                    StatRow(vm = vm, slot = char.stats[i], label = "stat[$i]")
+            if (char.stats.isNotEmpty()) {
+                item {
+                    Text(
+                        "استت‌ها (${char.stats.size})",
+                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                }
+                items(char.stats) { slot ->
+                    EditableRow(vm, slot, label = "stat[${slot.index}]")
                 }
             }
         }
@@ -295,10 +317,9 @@ fun CharacterDetailScreen(
 }
 
 @Composable
-fun StatRow(vm: SaveViewModel, slot: StatSlot, label: String) {
+fun EditableRow(vm: SaveViewModel, e: Editable, label: String) {
     var dialogOpen by remember { mutableStateOf(false) }
-    val currentValue = vm.currentValueOf(slot)
-
+    val currentValue = vm.currentValueOf(e)
     Row(
         Modifier
             .fillMaxWidth()
@@ -307,22 +328,20 @@ fun StatRow(vm: SaveViewModel, slot: StatSlot, label: String) {
     ) {
         Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
         Text(
-            "%.2f".format(currentValue),
+            formatValue(currentValue, e.type),
             Modifier.width(100.dp),
             style = MaterialTheme.typography.bodyMedium
         )
-        TextButton(onClick = { dialogOpen = true }) {
-            Text("ویرایش")
-        }
+        TextButton(onClick = { dialogOpen = true }) { Text("ویرایش") }
     }
-
     if (dialogOpen) {
         EditStatDialog(
             currentValue = currentValue,
+            type = e.type,
             label = label,
             onDismiss = { dialogOpen = false },
             onConfirm = { v ->
-                vm.setStat(slot, v)
+                vm.setValue(e, v)
                 dialogOpen = false
             }
         )
@@ -332,11 +351,12 @@ fun StatRow(vm: SaveViewModel, slot: StatSlot, label: String) {
 @Composable
 fun EditStatDialog(
     currentValue: Float,
+    type: PrimTypeEnum,
     label: String,
     onDismiss: () -> Unit,
     onConfirm: (Float) -> Unit
 ) {
-    var text by remember { mutableStateOf(currentValue.toString()) }
+    var text by remember { mutableStateOf(formatValue(currentValue, type)) }
     val parsed = text.replace(',', '.').toFloatOrNull()
 
     AlertDialog(
@@ -344,7 +364,10 @@ fun EditStatDialog(
         title = { Text("ویرایش $label") },
         text = {
             Column {
-                Text("مقدار فعلی: $currentValue", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "مقدار فعلی: ${formatValue(currentValue, type)}",
+                    style = MaterialTheme.typography.bodySmall
+                )
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = text,
