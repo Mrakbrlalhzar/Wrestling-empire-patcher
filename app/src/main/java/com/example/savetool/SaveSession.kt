@@ -1,5 +1,10 @@
 package com.example.savetool
 
+data class BulkChange(
+    val statsValue: Float?,
+    val extraFields: Map<String, Float>
+)
+
 class SaveSession private constructor(
     val originalBytes: ByteArray,
     val document: SaveDocument
@@ -13,8 +18,14 @@ class SaveSession private constructor(
     fun setAllStatsOf(char: Character, newValue: Float) =
         char.stats.forEach { setValue(it, newValue) }
 
-    fun setAllStatsOfEveryone(newValue: Float) =
-        document.characters.forEach { c -> c.stats.forEach { setValue(it, newValue) } }
+    fun applyBulkChange(chars: List<Character>, change: BulkChange) {
+        for (c in chars) {
+            change.statsValue?.let { v -> c.stats.forEach { setValue(it, v) } }
+            for (f in c.extraFields) {
+                change.extraFields[f.name]?.let { v -> setValue(f, v) }
+            }
+        }
+    }
 
     fun currentValueOf(e: Editable): Float =
         edits[e.offset]?.newValue ?: e.value

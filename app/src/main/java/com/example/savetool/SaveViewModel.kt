@@ -30,22 +30,17 @@ class SaveViewModel : ViewModel() {
                 session = null
                 val bytes = withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                        ?: throw IOException("نمی‌توان فایل را باز کرد")
+                        ?: throw IOException("Cannot open file")
                 }
                 val loaded = withContext(Dispatchers.IO) { SaveSession.load(bytes) }
                 session = loaded
                 editsVersion = 0
             } catch (e: Exception) {
-                error = e.message ?: "خطای نامشخص"
+                error = e.message ?: "Unknown error"
             } finally {
                 isLoading = false
             }
         }
-    }
-
-    fun setAllToEveryone(value: Float) {
-        session?.setAllStatsOfEveryone(value)
-        editsVersion++
     }
 
     fun setCharacterStats(char: Character, value: Float) {
@@ -55,6 +50,11 @@ class SaveViewModel : ViewModel() {
 
     fun setValue(e: Editable, value: Float) {
         session?.setValue(e, value)
+        editsVersion++
+    }
+
+    fun applyBulkChange(chars: List<Character>, change: BulkChange) {
+        session?.applyBulkChange(chars, change)
         editsVersion++
     }
 
