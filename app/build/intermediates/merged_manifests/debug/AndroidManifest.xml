@@ -19,9 +19,10 @@
         android:appComponentFactory="androidx.core.app.CoreComponentFactory"
         android:debuggable="true"
         android:extractNativeLibs="false"
-        android:icon="@android:drawable/sym_def_app_icon"
+        android:icon="@mipmap/ic_launcher"
         android:label="Save Editor"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar" >
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:theme="@android:style/Theme.Material.NoActionBar" >
         <activity
             android:name="com.example.savetool.MainActivity"
             android:exported="true" >

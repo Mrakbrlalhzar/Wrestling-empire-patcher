@@ -1,9 +1,9 @@
 -- Merging decision tree log ---
 manifest
-ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:2:1-17:12
-INJECTED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:2:1-17:12
-INJECTED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:2:1-17:12
-INJECTED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:2:1-17:12
+ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:2:1-18:12
+INJECTED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:2:1-18:12
+INJECTED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:2:1-18:12
+INJECTED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:2:1-18:12
 MERGED from [androidx.compose.material3:material3:1.1.2] /home/runner/.gradle/caches/transforms-3/0a1108eec19a77de338aeebd0264f6a6/transformed/material3-1.1.2/AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.activity:activity:1.8.2] /home/runner/.gradle/caches/transforms-3/aa76a1514919bee467bd91ec12ec39c6/transformed/activity-1.8.2/AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.compose.animation:animation-core-android:1.5.4] /home/runner/.gradle/caches/transforms-3/b97ab8bf1372b05e241ced70d6bb31a3/transformed/animation-core-release/AndroidManifest.xml:2:1-7:12
@@ -53,8 +53,8 @@ MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /home/runne
 	xmlns:android
 		ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:2:11-69
 application
-ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:3:5-16:19
-INJECTED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:3:5-16:19
+ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:3:5-17:19
+INJECTED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:3:5-17:19
 MERGED from [androidx.emoji2:emoji2:1.4.0] /home/runner/.gradle/caches/transforms-3/81c630c522991b5c4a66f165416dc642/transformed/emoji2-1.4.0/AndroidManifest.xml:23:5-33:19
 MERGED from [androidx.emoji2:emoji2:1.4.0] /home/runner/.gradle/caches/transforms-3/81c630c522991b5c4a66f165416dc642/transformed/emoji2-1.4.0/AndroidManifest.xml:23:5-33:19
 MERGED from [androidx.lifecycle:lifecycle-process:2.7.0] /home/runner/.gradle/caches/transforms-3/f85ac06fc2d55a22491880112208a206/transformed/lifecycle-process-2.7.0/AndroidManifest.xml:23:5-33:19
@@ -73,28 +73,30 @@ MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /home/runne
 		ADDED from [androidx.core:core:1.10.0] /home/runner/.gradle/caches/transforms-3/b955df8de0252fb9696f718b56c3293b/transformed/core-1.10.0/AndroidManifest.xml:28:18-86
 	android:label
 		ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:5:9-36
+	android:roundIcon
+		ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:7:9-54
 	android:icon
-		ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:6:9-58
+		ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:6:9-43
 	android:allowBackup
 		ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:4:9-35
 	android:theme
-		ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:7:9-72
+		ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:8:9-66
 activity#com.example.savetool.MainActivity
-ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:8:9-15:20
+ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:9:9-16:20
 	android:exported
-		ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:10:13-36
+		ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:11:13-36
 	android:name
-		ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:9:13-41
+		ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:10:13-41
 intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
-ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:11:13-14:29
+ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:12:13-15:29
 action#android.intent.action.MAIN
-ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:12:17-69
+ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:13:17-69
 	android:name
-		ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:12:25-66
+		ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:13:25-66
 category#android.intent.category.LAUNCHER
-ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:13:17-77
+ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:14:17-77
 	android:name
-		ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:13:27-74
+		ADDED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml:14:27-74
 uses-sdk
 INJECTED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml reason: use-sdk injection requested
 INJECTED from /home/runner/work/Wrestling-empire-patcher/Wrestling-empire-patcher/app/src/main/AndroidManifest.xml
