@@ -31,7 +31,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-// ============ Smart suggestion helpers ============
 fun fieldKeyFromLabel(label: String): String =
     if (label.startsWith("stat[")) "stat" else label
 
@@ -51,7 +50,6 @@ fun warningFor(fieldKey: String): String? = when (fieldKey) {
 
 val EXTRA_FIELD_ORDER = listOf("age", "height", "armMass", "muscleMass", "bodyMass", "legMass", "health", "spirit")
 
-// ============ Activity ============
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -121,7 +119,6 @@ fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
         val changeCount = vm.editsCount()
         val target = sourceUri
         if (bytes == null || changeCount == 0) {
-            // nothing to save
         } else if (target == null) {
             saveAsLauncher.launch("Save.bytes.patched")
         } else {
@@ -312,7 +309,6 @@ fun CharacterCard(char: Character, isSelected: Boolean, onToggleSelect: () -> Un
     }
 }
 
-// ============ Field input with suggestions ============
 @Composable
 fun FieldInput(
     label: String,
@@ -349,7 +345,6 @@ fun FieldInput(
     }
 }
 
-// ============ Bulk edit dialog ============
 @Composable
 fun BulkEditDialog(count: Int, onDismiss: () -> Unit, onConfirm: (BulkChange) -> Unit) {
     var statsText by remember { mutableStateOf("110") }
@@ -418,11 +413,18 @@ fun BulkEditDialog(count: Int, onDismiss: () -> Unit, onConfirm: (BulkChange) ->
     )
 }
 
-// ============ Character detail ============
+// ============ Character detail: compact button + dialog ============
 @Composable
 fun CharacterDetailScreen(vm: SaveViewModel, char: Character) {
+    var showSetAll by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
-        SetAllStatsCard(onSet = { value -> vm.setCharacterStats(char, value) })
+        Button(
+            onClick = { showSetAll = true },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text("⚡ Set all stats...", fontWeight = FontWeight.Bold)
+        }
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
             if (char.extraFields.isNotEmpty()) {
                 item {
@@ -440,46 +442,58 @@ fun CharacterDetailScreen(vm: SaveViewModel, char: Character) {
             }
         }
     }
+    if (showSetAll) {
+        SetAllStatsDialog(
+            currentCount = char.stats.size,
+            onDismiss = { showSetAll = false },
+            onConfirm = { value ->
+                vm.setCharacterStats(char, value)
+                showSetAll = false
+            }
+        )
+    }
 }
 
 @Composable
-fun SetAllStatsCard(onSet: (Float) -> Unit) {
+fun SetAllStatsDialog(currentCount: Int, onDismiss: () -> Unit, onConfirm: (Float) -> Unit) {
     var text by remember { mutableStateOf("110") }
     val parsed = text.replace(',', '.').toFloatOrNull()
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(Modifier.padding(12.dp)) {
-            Text("Set all stats to:", style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Set all stats") },
+        text = {
+            Column {
+                Text("This will overwrite all $currentCount stats of this character.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    label = { Text("Value") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    shape = RoundedCornerShape(12.dp)
+                    isError = parsed == null,
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    label = { Text("Value") },
+                    modifier = Modifier.fillMaxWidth()
                 )
-                Button(onClick = { parsed?.let(onSet) }, enabled = parsed != null, shape = RoundedCornerShape(12.dp)) { Text("Set") }
-            }
-            Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                suggestionsFor("stat").forEach { s ->
-                    FilledTonalButton(
-                        onClick = { text = s.toString() },
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
-                    ) { Text(s.toString(), style = MaterialTheme.typography.bodySmall) }
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    suggestionsFor("stat").forEach { s ->
+                        FilledTonalButton(
+                            onClick = { text = s.toString() },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+                        ) { Text(s.toString(), style = MaterialTheme.typography.bodySmall) }
+                    }
                 }
+                Spacer(Modifier.height(6.dp))
+                Text("⚠️ ${warningFor("stat")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Spacer(Modifier.height(4.dp))
-            Text("⚠️ ${warningFor("stat")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
+        },
+        confirmButton = {
+            TextButton(onClick = { parsed?.let(onConfirm) }, enabled = parsed != null) { Text("Set") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 @Composable
