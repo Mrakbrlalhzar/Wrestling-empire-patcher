@@ -39,8 +39,11 @@ fun suggestionsFor(fieldKey: String): List<Float> = when (fieldKey) {
     "height" -> listOf(1.22f)
     "armMass", "muscleMass" -> listOf(110f)
     "legMass", "bodyMass" -> listOf(-110f)
+    "health", "spirit" -> listOf(110f)
     else -> emptyList()
 }
+
+fun quickSetValueFor(fieldKey: String): Float? = suggestionsFor(fieldKey).firstOrNull()
 
 fun warningFor(fieldKey: String): String? = when (fieldKey) {
     "stat" -> "Values above ±1000 not recommended"
@@ -75,6 +78,8 @@ fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
     var selectedCharIndex by remember { mutableStateOf<Int?>(null) }
     var showAbout by remember { mutableStateOf(false) }
     var sourceUri by remember { mutableStateOf<Uri?>(null) }
+    // ✅ search is hoisted here so it survives navigation
+    var searchQuery by remember { mutableStateOf("") }
 
     BackHandler(enabled = selectedCharIndex != null) { selectedCharIndex = null }
 
@@ -88,6 +93,7 @@ fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
             } catch (_: Exception) { }
             sourceUri = uri
             selectedCharIndex = null
+            searchQuery = ""
             vm.load(uri, context)
         }
     }
@@ -183,7 +189,13 @@ fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
                     Button(onClick = { openLauncher.launch(arrayOf("*/*")) }, shape = RoundedCornerShape(12.dp)) { Text("📂 Pick file") }
                 }
                 selectedChar != null -> CharacterDetailScreen(vm = vm, char = selectedChar)
-                else -> CharacterListScreen(vm = vm, characters = characters, onSelect = { selectedCharIndex = it.arrayIndex })
+                else -> CharacterListScreen(
+                    vm = vm,
+                    characters = characters,
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = { searchQuery = it },
+                    onSelect = { selectedCharIndex = it.arrayIndex }
+                )
             }
         }
     }
@@ -236,15 +248,20 @@ fun GuideStep(num: String, text: String) {
 }
 
 @Composable
-fun CharacterListScreen(vm: SaveViewModel, characters: List<Character>, onSelect: (Character) -> Unit) {
-    var searchQuery by remember { mutableStateOf("") }
+fun CharacterListScreen(
+    vm: SaveViewModel,
+    characters: List<Character>,
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    onSelect: (Character) -> Unit
+) {
     var showBulkDialog by remember { mutableStateOf(false) }
     val filtered = remember(characters, searchQuery) {
         if (searchQuery.isBlank()) characters else characters.filter { it.name.contains(searchQuery, ignoreCase = true) }
     }
     val visibleIndices = remember(filtered) { filtered.map { it.arrayIndex }.toSet() }
     Column(Modifier.fillMaxSize()) {
-        OutlinedTextField(value = searchQuery, onValueChange = { searchQuery = it },
+        OutlinedTextField(value = searchQuery, onValueChange = onSearchQueryChange,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
             label = { Text("🔍 Search by name") }, singleLine = true, shape = RoundedCornerShape(14.dp))
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -413,7 +430,6 @@ fun BulkEditDialog(count: Int, onDismiss: () -> Unit, onConfirm: (BulkChange) ->
     )
 }
 
-// ============ Character detail: compact button + dialog ============
 @Composable
 fun CharacterDetailScreen(vm: SaveViewModel, char: Character) {
     var showSetAll by remember { mutableStateOf(false) }
@@ -500,11 +516,22 @@ fun SetAllStatsDialog(currentCount: Int, onDismiss: () -> Unit, onConfirm: (Floa
 fun EditableRow(vm: SaveViewModel, e: Editable, label: String) {
     var dialogOpen by remember { mutableStateOf(false) }
     val currentValue = vm.currentValueOf(e)
+    val fieldKey = fieldKeyFromLabel(label)
+    val quickValue = quickSetValueFor(fieldKey)
+
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 3.dp), shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-            Text(formatValue(currentValue, e.type), Modifier.width(90.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary)
+            Text(formatValue(currentValue, e.type), Modifier.width(80.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary)
+            if (quickValue != null) {
+                FilledTonalButton(
+                    onClick = { vm.setValue(e, quickValue) },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    shape = RoundedCornerShape(8.dp)
+                ) { Text(quickValue.toString(), style = MaterialTheme.typography.bodySmall) }
+                Spacer(Modifier.width(4.dp))
+            }
             TextButton(onClick = { dialogOpen = true }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) { Text("Edit") }
         }
     }
