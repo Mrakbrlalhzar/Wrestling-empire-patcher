@@ -30,14 +30,35 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.IOException
+
+// ============ Smart suggestion helpers ============
+fun fieldKeyFromLabel(label: String): String =
+    if (label.startsWith("stat[")) "stat" else label
+
+fun suggestionsFor(fieldKey: String): List<Float> = when (fieldKey) {
+    "stat" -> listOf(110f, -1000f)
+    "height" -> listOf(1.22f)
+    "armMass", "muscleMass" -> listOf(110f)
+    "legMass", "bodyMass" -> listOf(-110f)
+    else -> emptyList()
+}
+
+fun warningFor(fieldKey: String): String? = when (fieldKey) {
+    "stat" -> "Values above ±1000 not recommended"
+    "height" -> "Heights above 1.4 not recommended"
+    else -> null
+}
+
+val EXTRA_FIELD_ORDER = listOf("age", "height", "armMass", "muscleMass", "bodyMass", "legMass", "health", "spirit")
+
+// ============ Activity ============
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent { SaveEditorTheme { SaveEditorApp() } }
     }
 }
-/** OpenDocument that also requests write access */
+
 class WriteOpenDocument : ActivityResultContracts.OpenDocument() {
     override fun createIntent(context: Context, input: Array<String>): Intent {
         return super.createIntent(context, input).apply {
@@ -47,6 +68,7 @@ class WriteOpenDocument : ActivityResultContracts.OpenDocument() {
         }
     }
 }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
@@ -55,7 +77,9 @@ fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
     var selectedCharIndex by remember { mutableStateOf<Int?>(null) }
     var showAbout by remember { mutableStateOf(false) }
     var sourceUri by remember { mutableStateOf<Uri?>(null) }
+
     BackHandler(enabled = selectedCharIndex != null) { selectedCharIndex = null }
+
     val openLauncher = rememberLauncherForActivityResult(WriteOpenDocument()) { uri ->
         if (uri != null) {
             try {
@@ -97,7 +121,7 @@ fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
         val changeCount = vm.editsCount()
         val target = sourceUri
         if (bytes == null || changeCount == 0) {
-            // nothing to do
+            // nothing to save
         } else if (target == null) {
             saveAsLauncher.launch("Save.bytes.patched")
         } else {
@@ -117,8 +141,10 @@ fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
             }
         }
     }
+
     val characters = vm.session?.document?.characters.orEmpty()
     val selectedChar = selectedCharIndex?.let { idx -> characters.firstOrNull { it.arrayIndex == idx } }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -166,6 +192,7 @@ fun SaveEditorApp(vm: SaveViewModel = viewModel()) {
     }
     if (showAbout) AboutDialog(onDismiss = { showAbout = false })
 }
+
 @Composable
 fun AboutDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
@@ -192,16 +219,16 @@ fun AboutDialog(onDismiss: () -> Unit) {
                 Text("📖 Step-by-step guide", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(10.dp))
                 GuideStep("1.", "Tap 📂 Pick file and select Save.bytes")
-                GuideStep("2.", "Tap ⚡ All stats → -1000.0 to zero out every character")
-                GuideStep("3.", "Tap any character to edit their stats one by one")
-                GuideStep("4.", "Or use checkboxes + ⚡ Bulk edit to edit many at once")
-                GuideStep("5.", "Tap 💾 Save to overwrite the original file, or Save As for a copy")
-                GuideStep("6.", "Reopen the file in-game and check your changes")
+                GuideStep("2.", "Tap a character to edit their stats one by one")
+                GuideStep("3.", "Or use checkboxes + ⚡ Bulk edit to edit many at once")
+                GuideStep("4.", "Tap 💾 Save to overwrite the original file, or Save As for a copy")
+                GuideStep("5.", "Reopen the file in-game and check your changes")
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
     )
 }
+
 @Composable
 fun GuideStep(num: String, text: String) {
     Row(Modifier.padding(vertical = 3.dp)) {
@@ -210,6 +237,7 @@ fun GuideStep(num: String, text: String) {
         Text(text, style = MaterialTheme.typography.bodyMedium)
     }
 }
+
 @Composable
 fun CharacterListScreen(vm: SaveViewModel, characters: List<Character>, onSelect: (Character) -> Unit) {
     var searchQuery by remember { mutableStateOf("") }
@@ -236,17 +264,11 @@ fun CharacterListScreen(vm: SaveViewModel, characters: List<Character>, onSelect
                 }
             }
         }
-        Spacer(Modifier.height(8.dp))
-        Column(Modifier.padding(horizontal = 12.dp)) {
-            Button(onClick = { vm.setAllToEveryone(-1000f) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError)) {
-                Text("⚡ All stats → -1000.0", fontWeight = FontWeight.Bold)
-            }
-            if (vm.selectedIndices.isNotEmpty()) {
-                Spacer(Modifier.height(6.dp))
-                Button(onClick = { showBulkDialog = true }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
-                    Text("⚡ ${vm.selectedIndices.size} selected → Bulk edit", fontWeight = FontWeight.Bold)
-                }
+        if (vm.selectedIndices.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = { showBulkDialog = true },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), shape = RoundedCornerShape(12.dp)) {
+                Text("⚡ ${vm.selectedIndices.size} selected → Bulk edit", fontWeight = FontWeight.Bold)
             }
         }
         Text("${filtered.size} of ${characters.size} characters", Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
@@ -269,6 +291,7 @@ fun CharacterListScreen(vm: SaveViewModel, characters: List<Character>, onSelect
             onConfirm = { change -> vm.applyBulkChangeToSelected(change); showBulkDialog = false })
     }
 }
+
 @Composable
 fun CharacterCard(char: Character, isSelected: Boolean, onToggleSelect: () -> Unit, onClick: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp),
@@ -288,87 +311,177 @@ fun CharacterCard(char: Character, isSelected: Boolean, onToggleSelect: () -> Un
         }
     }
 }
+
+// ============ Field input with suggestions ============
+@Composable
+fun FieldInput(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    suggestions: List<Float>,
+    warning: String?
+) {
+    Column(Modifier.padding(bottom = 8.dp)) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            label = { Text(label) },
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (suggestions.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                suggestions.forEach { s ->
+                    FilledTonalButton(
+                        onClick = { onValueChange(s.toString()) },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                    ) { Text(s.toString(), style = MaterialTheme.typography.bodySmall) }
+                }
+            }
+        }
+        if (warning != null) {
+            Spacer(Modifier.height(2.dp))
+            Text("⚠️ $warning", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+// ============ Bulk edit dialog ============
 @Composable
 fun BulkEditDialog(count: Int, onDismiss: () -> Unit, onConfirm: (BulkChange) -> Unit) {
-    var statsText by remember { mutableStateOf("-1000.0") }
+    var statsText by remember { mutableStateOf("110") }
     var applyStats by remember { mutableStateOf(true) }
-    var ageText by remember { mutableStateOf("") }
-    var heightText by remember { mutableStateOf("") }
-    var armMassText by remember { mutableStateOf("") }
-    var muscleMassText by remember { mutableStateOf("") }
-    var bodyMassText by remember { mutableStateOf("") }
-    var legMassText by remember { mutableStateOf("") }
-    val quickValues = listOf("-1000", "0", "1000", "10000", "99999")
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Bulk edit $count characters") },
+    val extraTexts = remember {
+        mutableStateMapOf<String, String>().apply { EXTRA_FIELD_ORDER.forEach { this[it] = "" } }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Bulk edit $count characters") },
         text = {
-            Column(Modifier.height(420.dp).verticalScroll(rememberScrollState())) {
-                Text("Stats:", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            Column(Modifier.height(520.dp).verticalScroll(rememberScrollState())) {
+                Text("Stats:", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = applyStats, onCheckedChange = { applyStats = it })
                     Text("Apply to stats", style = MaterialTheme.typography.bodyMedium)
                 }
                 if (applyStats) {
-                    OutlinedTextField(value = statsText, onValueChange = { statsText = it },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true,
-                        shape = RoundedCornerShape(12.dp), label = { Text("Stat value") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(
+                        value = statsText,
+                        onValueChange = { statsText = it },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        label = { Text("Stat value") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Spacer(Modifier.height(4.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        quickValues.take(3).forEach { q -> FilledTonalButton(onClick = { statsText = q }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) { Text(q, style = MaterialTheme.typography.bodySmall) } }
+                        suggestionsFor("stat").forEach { s ->
+                            FilledTonalButton(
+                                onClick = { statsText = s.toString() },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                            ) { Text(s.toString(), style = MaterialTheme.typography.bodySmall) }
+                        }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        quickValues.drop(3).forEach { q -> FilledTonalButton(onClick = { statsText = q }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) { Text(q, style = MaterialTheme.typography.bodySmall) } }
-                    }
+                    Spacer(Modifier.height(2.dp))
+                    Text("⚠️ ${warningFor("stat")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(Modifier.height(16.dp))
-                Text("Extra fields (empty = unchanged):", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text("Extra fields (empty = unchanged):", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
-                OutlinedTextField(value = ageText, onValueChange = { ageText = it }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, shape = RoundedCornerShape(12.dp), label = { Text("age") }, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(4.dp))
-                OutlinedTextField(value = heightText, onValueChange = { heightText = it }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, shape = RoundedCornerShape(12.dp), label = { Text("height") }, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(4.dp))
-                OutlinedTextField(value = armMassText, onValueChange = { armMassText = it }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, shape = RoundedCornerShape(12.dp), label = { Text("armMass") }, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(4.dp))
-                OutlinedTextField(value = muscleMassText, onValueChange = { muscleMassText = it }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, shape = RoundedCornerShape(12.dp), label = { Text("muscleMass") }, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(4.dp))
-                OutlinedTextField(value = bodyMassText, onValueChange = { bodyMassText = it }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, shape = RoundedCornerShape(12.dp), label = { Text("bodyMass") }, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(4.dp))
-                OutlinedTextField(value = legMassText, onValueChange = { legMassText = it }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, shape = RoundedCornerShape(12.dp), label = { Text("legMass") }, modifier = Modifier.fillMaxWidth())
+                EXTRA_FIELD_ORDER.forEach { field ->
+                    FieldInput(
+                        label = field,
+                        value = extraTexts[field] ?: "",
+                        onValueChange = { extraTexts[field] = it },
+                        suggestions = suggestionsFor(field),
+                        warning = warningFor(field)
+                    )
+                }
             }
         },
         confirmButton = {
             TextButton(onClick = {
                 val statsVal = if (applyStats) statsText.replace(',', '.').toFloatOrNull() else null
                 val extras = mutableMapOf<String, Float>()
-                ageText.replace(',', '.').toFloatOrNull()?.let { extras["age"] = it }
-                heightText.replace(',', '.').toFloatOrNull()?.let { extras["height"] = it }
-                armMassText.replace(',', '.').toFloatOrNull()?.let { extras["armMass"] = it }
-                muscleMassText.replace(',', '.').toFloatOrNull()?.let { extras["muscleMass"] = it }
-                bodyMassText.replace(',', '.').toFloatOrNull()?.let { extras["bodyMass"] = it }
-                legMassText.replace(',', '.').toFloatOrNull()?.let { extras["legMass"] = it }
+                extraTexts.forEach { (k, v) ->
+                    v.replace(',', '.').toFloatOrNull()?.let { extras[k] = it }
+                }
                 onConfirm(BulkChange(statsVal, extras))
             }) { Text("Apply") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
+
+// ============ Character detail ============
 @Composable
 fun CharacterDetailScreen(vm: SaveViewModel, char: Character) {
     Column(Modifier.fillMaxSize()) {
-        Button(onClick = { vm.setCharacterStats(char, 1000f) },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp), shape = RoundedCornerShape(12.dp)) {
-            Text("⚡ All stats of this character → 1000.0", fontWeight = FontWeight.Bold)
-        }
+        SetAllStatsCard(onSet = { value -> vm.setCharacterStats(char, value) })
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
             if (char.extraFields.isNotEmpty()) {
-                item { Text("📊 Attributes", Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) }
+                item {
+                    Text("📊 Attributes", Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                }
                 items(char.extraFields) { f -> EditableRow(vm, f, label = f.name) }
             }
             if (char.stats.isNotEmpty()) {
-                item { Text("💪 Stats (${char.stats.size})", Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) }
+                item {
+                    Text("💪 Stats (${char.stats.size})", Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                }
                 items(char.stats) { slot -> EditableRow(vm, slot, label = "stat[${slot.index}]") }
             }
         }
     }
 }
+
+@Composable
+fun SetAllStatsCard(onSet: (Float) -> Unit) {
+    var text by remember { mutableStateOf("110") }
+    val parsed = text.replace(',', '.').toFloatOrNull()
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text("Set all stats to:", style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    label = { Text("Value") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Button(onClick = { parsed?.let(onSet) }, enabled = parsed != null, shape = RoundedCornerShape(12.dp)) { Text("Set") }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                suggestionsFor("stat").forEach { s ->
+                    FilledTonalButton(
+                        onClick = { text = s.toString() },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+                    ) { Text(s.toString(), style = MaterialTheme.typography.bodySmall) }
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Text("⚠️ ${warningFor("stat")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
 @Composable
 fun EditableRow(vm: SaveViewModel, e: Editable, label: String) {
     var dialogOpen by remember { mutableStateOf(false) }
@@ -386,19 +499,56 @@ fun EditableRow(vm: SaveViewModel, e: Editable, label: String) {
             onDismiss = { dialogOpen = false }, onConfirm = { v -> vm.setValue(e, v); dialogOpen = false })
     }
 }
+
 @Composable
-fun EditStatDialog(currentValue: Float, type: PrimTypeEnum, label: String, onDismiss: () -> Unit, onConfirm: (Float) -> Unit) {
+fun EditStatDialog(
+    currentValue: Float,
+    type: PrimTypeEnum,
+    label: String,
+    onDismiss: () -> Unit,
+    onConfirm: (Float) -> Unit
+) {
+    val fieldKey = fieldKeyFromLabel(label)
+    val suggestions = suggestionsFor(fieldKey)
+    val warning = warningFor(fieldKey)
     var text by remember { mutableStateOf(formatValue(currentValue, type)) }
     val parsed = text.replace(',', '.').toFloatOrNull()
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Edit $label") },
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit $label") },
         text = {
             Column {
                 Text("Current: ${formatValue(currentValue, type)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(10.dp))
-                OutlinedTextField(value = text, onValueChange = { text = it }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    isError = parsed == null, singleLine = true, shape = RoundedCornerShape(12.dp), label = { Text("New value") })
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    isError = parsed == null,
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    label = { Text("New value") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (suggestions.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        suggestions.forEach { s ->
+                            FilledTonalButton(
+                                onClick = { text = s.toString() },
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+                            ) { Text(s.toString(), style = MaterialTheme.typography.bodySmall) }
+                        }
+                    }
+                }
+                if (warning != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("⚠️ $warning", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         },
         confirmButton = { TextButton(onClick = { parsed?.let(onConfirm) }, enabled = parsed != null) { Text("OK") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }

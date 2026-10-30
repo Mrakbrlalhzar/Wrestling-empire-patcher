@@ -159,7 +159,7 @@ class SaveParser(private val bytes: ByteArray) {
                 StatSlot(i, it.offset, it.length, it.type, (it.value as? Number)?.toFloat() ?: 0f, it.special)
             }
         } ?: emptyList()
-        val extraFieldNames = listOf("age", "height", "armMass", "muscleMass", "bodyMass", "legMass")
+        val extraFieldNames = listOf("age", "height", "armMass", "muscleMass", "bodyMass", "legMass", "health", "spirit")
         val extraFields = extraFieldNames.mapNotNull { fn ->
             val leaf = unwrap(obj.member(fn)) as? BinValue.Leaf ?: return@mapNotNull null
             EditableLeaf(fn, leaf.offset, leaf.length, leaf.type, (leaf.value as? Number)?.toFloat() ?: 0f, leaf.special)
